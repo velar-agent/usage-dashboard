@@ -367,7 +367,7 @@ section:first-of-type { margin-top:0; }
 /* =========================================================
    4. 요약(KPI) + 한도 카드
    ========================================================= */
-.kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--sp-3); margin-bottom:var(--sp-4); }
+.kpis { display:grid; grid-template-columns:repeat(2,1fr); gap:var(--sp-3); margin-bottom:var(--sp-4); }
 .kpi { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); box-shadow:var(--shadow); min-width:0; }
 .kpi .k { color:var(--muted); font-size:12px; line-height:16px; }
 .kpi .v { margin-top:2px; font-size:16px; line-height:24px; font-weight:700; letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -630,7 +630,7 @@ td.c-time[data-dup] { color:var(--muted); }
     <div class="sec-h">
       <div><h2 class="t-h2" id="h-limits">한도 현황</h2><p class="sub" id="limitsSub"></p></div>
       <div class="seg" role="group" aria-label="정렬" id="sortSeg" hidden>
-        <button type="button" data-sort="urgent" aria-pressed="true">긴급한 순</button>
+        <button type="button" data-sort="urgent" aria-pressed="true">사용률 높은 순</button>
         <button type="button" data-sort="reset" aria-pressed="false">초기화 임박순</button>
         <button type="button" data-sort="resetLate" aria-pressed="false">초기화 늦은 순</button>
         <button type="button" data-sort="service" aria-pressed="false">서비스별</button>
@@ -750,7 +750,7 @@ function fmtAgo(ms) {
 }
 const fmtPct = n => Number.isInteger(n) ? String(n) : (Math.round(n * 10) / 10).toFixed(1).replace(/\.0$/, "");
 const num = v => (v === null || v === undefined || v === "") ? NaN : Number(v);
-const statusOf = n => !Number.isFinite(n) ? "na" : n > THRESH.bad ? "bad" : n >= THRESH.warn ? "warn" : "ok";
+const statusOf = n => !Number.isFinite(n) ? "na" : "ok";   // 사용률에 따른 위험·주의 구분은 2026-11-15 제거
 const STATUS_TXT = { ok:"여유", warn:"주의", bad:"위험", na:"—" };
 const ICON = {
   ok:  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
@@ -938,15 +938,12 @@ function renderLimits() {
 
   const byU = [...list].sort(urgency)[0];
   const withReset = list.filter(v => v.rs !== null && v.rs > now).sort((a, b) => a.rs - b.rs)[0];
-  const nWarn = list.filter(v => v.st === "warn").length, nBad = list.filter(v => v.st === "bad").length;
-  const hs = Number.isFinite(byU.n) && byU.pct ? byU.st : "na";
   const kp1 = Number.isFinite(byU.n) && byU.pct
-    ? `<div class="kpi" data-s="${hs === "ok" || hs === "na" ? "" : hs}"><div class="k">가장 높은 사용률</div><div class="v num">${fmtPct(byU.n)}%<small>${esc(svcName(byU.r.service))} · ${esc(metricLabel(byU.r.metric))}${byU.r.note ? " · " + esc(byU.r.note) : ""}</small></div></div>`
+    ? `<div class="kpi"><div class="k">가장 높은 사용률</div><div class="v num">${fmtPct(byU.n)}%<small>${esc(svcName(byU.r.service))} · ${esc(metricLabel(byU.r.metric))}${byU.r.note ? " · " + esc(byU.r.note) : ""}</small></div></div>`
     : `<div class="kpi"><div class="k">가장 높은 사용률</div><div class="v">—</div></div>`;
   morphList(kpis, [
     { key:"max", html:kp1 },
     { key:"reset", html:`<div class="kpi"><div class="k">가장 가까운 초기화</div><div class="v">${withReset ? esc(fmtIn(withReset.rs - now)) : "—"}<small>${withReset ? esc(svcName(withReset.r.service)) + " · " + esc(metricLabel(withReset.r.metric)) : ""}</small></div></div>` },
-    { key:"warn", html:`<div class="kpi" data-s="${nBad ? "bad" : nWarn ? "warn" : ""}"><div class="k">주의 필요</div><div class="v">${nBad + nWarn ? `위험 ${nBad} · 주의 ${nWarn}` : "없음"}<small>전체 ${list.length}개 한도</small></div></div>` },
   ]);
   sub.textContent = `서비스 ${new Set(list.map(v => v.r.service)).size}개 · 한도 ${list.length}개${filtered ? ` (전체 ${all.length}개 중)` : ""} · ${sortMode === "urgent" ? "사용률이 높은 순" : sortMode === "reset" ? "초기화가 가까운 순" : sortMode === "resetLate" ? "초기화가 늦은 순" : "서비스 이름 순"}`;
 
@@ -968,10 +965,10 @@ function renderLimits() {
     if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
     else if (v.rs) resetHtml = `<b>${esc(fmtIn(v.rs - now))}</b>${esc(fmtDT(v.rs))} 초기화`;
     else resetHtml = `<b>—</b>초기화 시각 없음`;
-    const aria = v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트, ${v.expired ? "초기화됨, 새 값 대기 중" : STATUS_TXT[st]}`
+    const aria = v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트${v.expired ? ", 초기화됨, 새 값 대기 중" : ""}`
                        : `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} ${fmtVal(r)}`;
     const big = v.pct ? `${Number.isFinite(n) ? fmtPct(n) : "—"}<small>%</small>` : esc(fmtVal(r));
-    const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : `<span class="chip" data-s="${st}">${ICON[st]}${STATUS_TXT[st]}</span>`;
+    const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
     const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span>${pace !== null ? `<i class="pace" style="left:calc(${pace.toFixed(1)}% - 1px)" title="기간 경과 ${Math.round(pace)}%"></i>` : ""}</div>` : "";
     return { key:v.key, html:`<article class="card" data-s="${st}" aria-label="${esc(aria)}">
       <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${chip}</div>
@@ -981,7 +978,7 @@ function renderLimits() {
       <div class="card-f"><span class="pacetxt">${pace !== null ? "기간 " + Math.round(pace) + "% 경과" : "&nbsp;"}</span><span class="age" data-late="${lvl}" title="${esc(fmtFull(v.ts))}">${esc(fmtAgo(v.age))} 기록${lvl ? " ⚠" : ""}</span></div>
     </article>` };
   }));
-  setHTML(note, `<span><i></i>세로선: 한도 기간 중 현재까지 경과한 비율 (막대가 선보다 앞서면 빠르게 쓰는 중)</span><span>여유 &lt;60% · 주의 60–85% · 위험 &gt;85%</span>`);
+  setHTML(note, `<span><i></i>세로선: 한도 기간 중 현재까지 경과한 비율 (막대가 선보다 앞서면 빠르게 쓰는 중)</span>`);
 }
 
 /* ---------- 차트 (인라인 SVG, 고정 높이 비율) ---------- */
