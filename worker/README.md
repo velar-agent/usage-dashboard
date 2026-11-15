@@ -52,3 +52,6 @@ Workers & Pages → `usage` → Edit code 로 `src/index.js` / `src/html.js` 를
 - 기록 보내는 법은 `/workspace/token-usage/INGEST.md`.
 - 무료 플랜 제약: Worker 호출당 D1 질의 50개 → `/api/ingest` 는 한 번에 40건까지.
 - 처음 배포용 시크릿 묶음은 `/workspace/token-usage/.worker-secrets.json`(권한 600)에 있어요. 배포가 끝나면 지워도 돼요. 키는 `ingest-key.txt`(권한 600)에도 있어요.
+
+## GitHub
+- 소스 저장소: https://github.com/velar-agent/usage-dashboard (공개). 작업 사본은 `/workspace/usage-dashboard`. 여기서 고친 코드·문서는 그 사본에 복사해 커밋·푸시해요. 키·비밀번호·원본 기록은 올리지 않아요.
