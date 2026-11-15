@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+__pycache__/
+*.pid
+*.log
+*-key.txt
+*password*.txt
+*token*.txt
+.worker-secrets.json
+raw-auth.json
+.dev.vars

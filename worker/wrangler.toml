@@ -1,0 +1,14 @@
+name = "usage"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "token-usage"
+database_id = "3b3117af-7c22-4aaa-85cc-2d8ec448e9b7"
+
+# 사용자 지정 도메인은 대시보드(Workers & Pages → usage → Settings → Domains)나 API로 붙였어요.
+# 시크릿(INGEST_KEY, SESSION_SECRET, RAW_SALT, RAW_HASH, RAW_ITERATIONS)은 `wrangler secret put` 으로 설정해요.
