@@ -824,7 +824,8 @@ function fillSeries(el, rows) {
   el.querySelector(".msel-t").textContent = !sel.length ? el.dataset.all : sel.length === 1 ? serLabel(byK.get(sel[0])) : `${sel.length}개 한도 선택`;
   return sel;
 }
-let sortMode = "urgent", userRange = null, shown = 0;
+const SORTS = ["urgent", "reset", "resetLate", "service"];
+let sortMode = SORTS.includes(LF.o) ? LF.o : "urgent", userRange = null, shown = 0;
 const seriesVisible = {};
 let SERIES = new Map();    // service -> [series]
 let dataVer = "";
@@ -1270,7 +1271,9 @@ document.querySelectorAll(".msel").forEach(el => el.addEventListener("change", e
 }));
 document.addEventListener("click", ev => document.querySelectorAll(".msel[open]").forEach(el => { if (!el.contains(ev.target)) el.open = false; }));
 document.addEventListener("keydown", ev => { if (ev.key === "Escape") document.querySelectorAll(".msel[open]").forEach(el => { el.open = false; el.querySelector("summary").focus(); }); });
-document.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { sortMode = b.dataset.sort; document.querySelectorAll("[data-sort]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); renderLimits(); });
+function syncSort() { document.querySelectorAll("[data-sort]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.sort === sortMode))); }
+syncSort(); syncView();
+document.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { sortMode = b.dataset.sort; LF.o = sortMode; saveLF(); syncSort(); renderLimits(); });
 document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { userRange = b.dataset.range; renderTrends(); });
 ["fService", "fMetric", "fQ"].forEach(id => $(id).addEventListener("input", () => { shown = pageSize(); renderTable(); }));
 $("btnMore").onclick = () => { shown += 50; renderTable(); };
