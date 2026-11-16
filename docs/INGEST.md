@@ -3,7 +3,7 @@
 대시보드는 이제 Cloudflare Worker + D1 에서 돌아가요. 로깅 봇은 파일에 쓰는 대신 아래 주소로 **HTTP POST** 하면 돼요.
 The dashboard now runs on a Cloudflare Worker + D1. The logging bot should **POST over HTTP** instead of appending to local files.
 
-- 주소 / URL: `https://usage.velar-agent.workers.dev/api/ingest`
+- 주소 / URL: `https://usage-dashboard.velar-agent.workers.dev/api/ingest`
 - 인증 / Auth: 헤더 `Authorization: Bearer <INGEST_KEY>`
 - 키 파일 / Key file (box): `/workspace/token-usage/ingest-key.txt` (권한 600, 채팅·로그에 찍지 마세요 / never print or log it)
 - 본문 / Body: `Content-Type: application/json` — 기록 객체 하나, 객체 배열, 또는 `{"records":[...]}`. **한 번에 최대 40건 / max 40 records per request**, 본문 256KB 이하.
@@ -28,7 +28,7 @@ Records with the same `ts`+`service`+`metric`+`note` are stored once; re-sending
 ## 예 1: 한 건 / one record
 
 ```bash
-curl -sS -X POST https://usage.velar-agent.workers.dev/api/ingest \
+curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/ingest \
   -H "Authorization: Bearer $(cat /workspace/token-usage/ingest-key.txt)" \
   -H "Content-Type: application/json" \
   -d '{"ts":"2026-11-15T15:20:00+09:00","service":"grok","metric":"weekly_used_pct","value":7,"unit":"%","reset_at":"2026-11-17T15:42:00+09:00","note":"X Premium+","source":"token-usage-logging-bot"}'
@@ -37,7 +37,7 @@ curl -sS -X POST https://usage.velar-agent.workers.dev/api/ingest \
 ## 예 2: 여러 건 / several records
 
 ```bash
-curl -sS -X POST https://usage.velar-agent.workers.dev/api/ingest \
+curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/ingest \
   -H "Authorization: Bearer $(cat /workspace/token-usage/ingest-key.txt)" \
   -H "Content-Type: application/json" \
   -d '[{"service":"claude","metric":"session_used_pct","value":0,"unit":"%","note":"all models"},
@@ -54,7 +54,7 @@ key = open("/workspace/token-usage/ingest-key.txt").read().strip()
 recs = [{"ts": datetime.now(KST).isoformat(timespec="seconds"), "service": "codex",
          "metric": "weekly_used_pct", "value": 36, "unit": "%", "note": "ChatGPT prolite",
          "source": "token-usage-logging-bot"}]
-req = urllib.request.Request("https://usage.velar-agent.workers.dev/api/ingest", data=json.dumps(recs).encode(),
+req = urllib.request.Request("https://usage-dashboard.velar-agent.workers.dev/api/ingest", data=json.dumps(recs).encode(),
       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                "User-Agent": "token-usage-logging-bot/1.0"}, method="POST")
 # 기본 Python-urllib User-Agent는 Cloudflare가 403(error 1010)으로 막아요. UA를 꼭 지정하세요.
@@ -71,7 +71,7 @@ print(urllib.request.urlopen(req, timeout=30).read().decode())
 ## 원본(raw) 파일 올리기 (선택) / Uploading a raw dump (optional)
 
 ```bash
-python3 - <<'PY' | curl -sS -X POST https://usage.velar-agent.workers.dev/api/raw/upload \
+python3 - <<'PY' | curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/raw/upload \
   -H "Authorization: Bearer $(cat /workspace/token-usage/ingest-key.txt)" -H "Content-Type: application/json" --data-binary @-
 import json; print(json.dumps({"name":"2026-11-15_1800_grok.jsonl","content":open("/workspace/token-usage/raw/2026-11-15_1800_grok.jsonl").read()}))
 PY

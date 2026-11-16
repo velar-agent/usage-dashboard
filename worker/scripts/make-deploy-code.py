@@ -2,13 +2,13 @@
 """Cloudflare 연결(MCP execute) 또는 API로 Worker를 올릴 때 쓰는 코드(JS)를 만들어요.
 
 사용법:
-  python3 make-deploy-code.py > /tmp/deploy.js            # 운영(usage) 코드만 다시 올림 (시크릿은 그대로 유지)
-  python3 make-deploy-code.py --name usage-dev > /tmp/deploy.js  # 개발 환경. D1은 wrangler.toml [env.dev]
-  python3 make-deploy-code.py --name usage-dev --d1-id UUID > /tmp/deploy.js
+  python3 make-deploy-code.py > /tmp/deploy.js            # 운영(usage-dashboard) 코드만 다시 올림 (시크릿은 그대로 유지)
+  python3 make-deploy-code.py --name usage-dashboard-dev > /tmp/deploy.js  # 개발 환경. D1은 wrangler.toml [env.dev]
+  python3 make-deploy-code.py --name usage-dashboard-dev --d1-id UUID > /tmp/deploy.js
   python3 make-deploy-code.py --secrets FILE > /tmp/deploy.js   # 시크릿까지 새로 설정 (처음 배포/교체)
 FILE 은 {"INGEST_KEY":..,"SESSION_SECRET":..,"RAW_SALT":..,"RAW_HASH":..,"RAW_ITERATIONS":..} JSON.
 출력에는 시크릿이 들어갈 수 있으니 화면에 찍거나 공유하지 말고 쓰고 나면 지우세요.
---name 이 usage 가 아닌데 --d1-id 도 없고 wrangler.toml 의 해당 env 에도 database_id 가 없으면, 운영 D1을 쓰지 않고 중단합니다.
+--name 이 usage-dashboard 가 아닌데 --d1-id 도 없고 wrangler.toml 의 해당 env 에도 database_id 가 없으면, 운영 D1을 쓰지 않고 중단합니다.
 """
 import argparse, json, re
 from pathlib import Path
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 p = argparse.ArgumentParser()
 p.add_argument("--secrets")
 p.add_argument("--d1-id", default=None)
-p.add_argument("--name", default="usage")
+p.add_argument("--name", default="usage-dashboard")
 a = p.parse_args()
 
 def d1_id_from_toml(text, env=None):
@@ -35,7 +35,7 @@ def d1_id_from_toml(text, env=None):
 d1_id = a.d1_id
 if not d1_id:
     toml = (ROOT / "wrangler.toml").read_text()
-    if a.name == "usage":
+    if a.name == "usage-dashboard":
         d1_id = d1_id_from_toml(toml)
     else:
         env = "dev" if a.name.endswith("-dev") else a.name

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""usage-dev 에서 검증한 로컬 코드를 운영 Worker(usage)에 올리기 위한 준비/검증 스크립트.
+"""usage-dashboard-dev 에서 검증한 로컬 코드를 운영 Worker(usage-dashboard)에 올리기 위한 준비/검증 스크립트.
 
 이 스크립트는 운영에 배포하지 않습니다. Cloudflare MCP execute 는 호출하지 않습니다.
 시크릿·키 파일 내용은 읽거나 출력하거나 복사하거나 덮어쓰지 않습니다. D1 데이터도 옮기지 않습니다.
 
 사용법:
   python3 worker/scripts/promote-dev-to-prod.py precheck
-  python3 worker/scripts/promote-dev-to-prod.py build              # /tmp/deploy.js (대상: 운영 usage)
+  python3 worker/scripts/promote-dev-to-prod.py build              # /tmp/deploy.js (대상: 운영 usage-dashboard)
   python3 worker/scripts/promote-dev-to-prod.py build -o /tmp/x.js
   # 그다음: user-Cloudflare execute 에 code="$file:/tmp/deploy.js"
   python3 worker/scripts/promote-dev-to-prod.py postcheck
@@ -35,10 +35,10 @@ INDEX_JS = WORKER / "src" / "index.js"
 TOML = WORKER / "wrangler.toml"
 DEFAULT_OUT = Path("/tmp/deploy.js")
 
-PROD_NAME = "usage"
-DEV_NAME = "usage-dev"
-PROD_URL = "https://usage.velar-agent.workers.dev"
-DEV_URL = "https://usage-dev.velar-agent.workers.dev"
+PROD_NAME = "usage-dashboard"
+DEV_NAME = "usage-dashboard-dev"
+PROD_URL = "https://usage-dashboard.velar-agent.workers.dev"
+DEV_URL = "https://usage-dashboard-dev.velar-agent.workers.dev"
 HTTP_TIMEOUT = 20
 RECORDS_KEYS = ("records", "count", "total", "limit", "skipped", "generated_at", "timezone")
 USER_AGENT = "token-usage-promote-script"
@@ -315,7 +315,7 @@ def extract_js_json(src: str, prefix: str) -> object:
 
 
 def verify_deploy_js(text: str, prod_d1: str) -> list[str]:
-    """생성된 배포 코드가 운영(usage)만 가리키고, 시크릿을 포함하지 않는지 확인해요. 시크릿 값은 출력하지 않습니다."""
+    """생성된 배포 코드가 운영(usage-dashboard)만 가리키고, 시크릿을 포함하지 않는지 확인해요. 시크릿 값은 출력하지 않습니다."""
     errors: list[str] = []
     m = re.search(
         r"cloudflare\.request\(\{method:'PUT', path:`/accounts/\$\{accountId\}/workers/scripts/([^`]+)`",
@@ -370,7 +370,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     print()
     print("*" * 64)
     print("  대상은 운영(PRODUCTION) Worker 입니다:  " + PROD_NAME)
-    print("  개발(usage-dev)이 아닙니다.")
+    print("  개발(usage-dashboard-dev)이 아닙니다.")
     print(f"  URL : {PROD_URL}")
     print(f"  D1  : token-usage ({prod_d1})")
     print("  시크릿·기존 바인딩은 keep_bindings 로 유지됩니다.")
@@ -382,7 +382,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"FAIL  {MAKE_DEPLOY} 가 없어요", file=sys.stderr)
         return 1
 
-    # --name usage 를 명시합니다. 기본값이 usage 여도 실수로 빠져 운영에 나가는 일을
+    # --name usage-dashboard 를 명시합니다. 기본값이 usage-dashboard 여도 실수로 빠져 운영에 나가는 일을
     # 이 스크립트에서만이라도 분명히 하기 위함입니다. --secrets 는 절대 넘기지 않습니다.
     r = subprocess.run(
         [sys.executable, str(MAKE_DEPLOY), "--name", PROD_NAME],
@@ -514,13 +514,13 @@ def cmd_diff(args: argparse.Namespace) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="usage-dev 에서 검증한 로컬 코드를 운영(usage)에 올리기 위한 준비/검증. 이 스크립트는 배포하지 않습니다.",
+        description="usage-dashboard-dev 에서 검증한 로컬 코드를 운영(usage-dashboard)에 올리기 위한 준비/검증. 이 스크립트는 배포하지 않습니다.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("precheck", help="구문 검사, html 동기화, 개발 환경 동작 확인")
 
-    b = sub.add_parser("build", help="운영(usage)용 /tmp/deploy.js 생성. 배포는 하지 않음")
+    b = sub.add_parser("build", help="운영(usage-dashboard)용 /tmp/deploy.js 생성. 배포는 하지 않음")
     b.add_argument("-o", "--output", default=str(DEFAULT_OUT), help=f"출력 경로 (기본 {DEFAULT_OUT})")
 
     po = sub.add_parser("postcheck", help="운영 동작 확인 후 배포 파일 삭제")

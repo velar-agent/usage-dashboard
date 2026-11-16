@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """processed/*.jsonl 과 raw/ 파일을 배포된 Worker 로 올려요 (여러 번 실행해도 중복은 무시돼요).
 
-  python3 import-local-data.py --url https://usage.velar-agent.workers.dev [--ip 104.21.x.x] [--key-file /workspace/token-usage/ingest-key.txt]
+  python3 import-local-data.py --url https://usage-dashboard.velar-agent.workers.dev [--ip 104.21.x.x] [--key-file /workspace/token-usage/ingest-key.txt]
 """
 import argparse, json, subprocess, sys
 from datetime import datetime, timedelta, timezone
@@ -10,7 +10,7 @@ from pathlib import Path
 KST = timezone(timedelta(hours=9))
 BASE = Path("/workspace/token-usage")
 ap = argparse.ArgumentParser()
-ap.add_argument("--url", default="https://usage.velar-agent.workers.dev")
+ap.add_argument("--url", default="https://usage-dashboard.velar-agent.workers.dev")
 ap.add_argument("--ip", help="DNS 를 건너뛰고 이 엣지 IP 로 접속 (curl --resolve)")
 ap.add_argument("--key-file", default=str(BASE / "ingest-key.txt"))
 ap.add_argument("--chunk", type=int, default=25)
