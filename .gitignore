@@ -7,5 +7,7 @@ __pycache__/
 *password*.txt
 *token*.txt
 .worker-secrets.json
+.worker-secrets*.json
 raw-auth.json
 .dev.vars
+session-secret*.txt

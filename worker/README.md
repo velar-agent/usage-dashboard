@@ -46,6 +46,22 @@ python3 worker/scripts/make-deploy-code.py > /tmp/deploy.js   # 코드만 교체
 ### C. 대시보드
 Workers & Pages → `usage` → Edit code 로 `src/index.js` / `src/html.js` 를 직접 붙여 넣어도 돼요.
 
+## 개발 환경 (usage-dev)
+운영과 같은 코드·바인딩 이름·시크릿 이름을 쓰는 복사본이에요. D1은 따로 두고, 운영 Worker(`usage`)는 건드리지 않아요.
+
+| 항목 | 값 |
+| --- | --- |
+| Worker 이름 | `usage-dev` |
+| D1 데이터베이스 | `usage-dev` (id `7d0d0229-8d79-41f3-9a51-64b52b73f440`) |
+| 주소 | `https://usage-dev.velar-agent.workers.dev` |
+
+배포할 때 운영 기본값(`--name` 기본 `usage`)은 그대로 두고, 개발 쪽만 지정해요. `--d1-id`를 생략하면 `wrangler.toml`의 `[env.dev]` database_id 를 씁니다.
+```bash
+python3 worker/scripts/make-deploy-code.py --name usage-dev > /tmp/deploy.js   # 코드만 교체, 시크릿 유지(keep_bindings)
+# → user-Cloudflare 의 execute 도구에 code="$file:/tmp/deploy.js" 로 실행. 끝나면 /tmp/deploy.js 삭제
+```
+처음 만들 때나 시크릿을 다시 넣을 때는 `--secrets FILE`을 붙입니다. wrangler 로는 `npx wrangler deploy --env dev` 입니다.
+
 ## 동작 메모
 - `/api/records` 응답은 같은 주소 기준 엣지에 20초 캐시돼요(D1 읽기량 절약). 새 기록은 최대 20초 뒤에 보여요.
 - 원본 열람 비밀번호: `RAW_HASH`(PBKDF2-SHA256, 10,000회). 세션은 서명된 HttpOnly·Secure·SameSite=Strict 쿠키 12시간. 로그아웃하면 해당 세션은 D1 `revoked_sessions` 로 무효화돼요. 틀린 비밀번호는 IP당 1분에 5번까지.

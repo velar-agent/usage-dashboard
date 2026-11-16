@@ -12,3 +12,14 @@ database_id = "3b3117af-7c22-4aaa-85cc-2d8ec448e9b7"
 
 # 사용자 지정 도메인은 대시보드(Workers & Pages → usage → Settings → Domains)나 API로 붙였어요.
 # 시크릿(INGEST_KEY, SESSION_SECRET, RAW_SALT, RAW_HASH, RAW_ITERATIONS)은 `wrangler secret put` 으로 설정해요.
+
+# 개발 복사본. 운영(위의 name / [[d1_databases]])은 그대로 두고,
+# wrangler 는 `npx wrangler deploy --env dev`, MCP 배포는 --name usage-dev 를 써요.
+[env.dev]
+name = "usage-dev"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "usage-dev"
+database_id = "7d0d0229-8d79-41f3-9a51-64b52b73f440"
+
