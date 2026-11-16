@@ -840,7 +840,7 @@ function latestSeries() {
 }
 function viewOf(r, now) {
   const n = num(r.value), pct = isPctRec(r), ts = tms(r.ts) ?? now, rs = tms(r.reset_at);
-  const expired = rs !== null && rs < now && ts < rs;           // 초기화 시각이 지났는데 값은 그 이전 것
+  const expired = false;  // 2026-11-16 사용자 요청: 초기화 시각이 지나도 '초기화됨' 판단 없이 마지막 값을 그대로 보여준다
   const st = expired || !pct ? "na" : statusOf(n);
   return { r, n, pct, ts, rs, expired, st, age: Math.max(0, now - ts), key: serKey(r) };
 }
@@ -954,7 +954,7 @@ function renderLimits() {
     setHTML($("limBody"), list.map(v => {
       const r = v.r, n = v.n, st = v.st, lvl = ageLevel(v.age), win = WINDOW_MS(r.metric);
       let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
-      const reset = v.expired ? `<b>초기화됨</b><span>새 값 대기 중</span>` : v.rs ? `<b>${esc(fmtIn(v.rs - now))}</b><span>${esc(fmtDT(v.rs))}</span>` : `<span>—</span>`;
+      const reset = v.expired ? `<b>초기화됨</b><span>새 값 대기 중</span>` : v.rs ? (v.rs > now ? `<b>${esc(fmtIn(v.rs - now))}</b><span>${esc(fmtDT(v.rs))}</span>` : `<b>${esc(fmtDT(v.rs))}</b>`) : `<span>—</span>`;
       const val = v.pct ? `${Number.isFinite(n) ? fmtPct(n) + "%" : "—"}<span class="mini"><i style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></i></span>` : esc(fmtVal(r));
       return `<tr><td class="c-svc">${esc(svcName(r.service))}</td><td>${esc(metricLabel(r.metric))}</td><td class="c-note">${esc(r.note || "")}</td><td class="c-val num" data-s="${st}">${val}</td><td class="c-reset">${reset}</td><td>${pace !== null ? Math.round(pace) + "%" : "—"}</td><td class="c-age" data-late="${lvl}" title="${esc(fmtFull(v.ts))}">${esc(fmtAgo(v.age))}${lvl ? " ⚠" : ""}</td></tr>`;
     }).join(""));
@@ -963,7 +963,8 @@ function renderLimits() {
     let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
     let resetHtml;
     if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
-    else if (v.rs) resetHtml = `<b>${esc(fmtIn(v.rs - now))}</b>${esc(fmtDT(v.rs))} 초기화`;
+    else if (v.rs && v.rs > now) resetHtml = `<b>${esc(fmtIn(v.rs - now))}</b>${esc(fmtDT(v.rs))} 초기화`;
+    else if (v.rs) resetHtml = `<b>${esc(fmtDT(v.rs))}</b>초기화`;
     else resetHtml = `<b>—</b>초기화 시각 없음`;
     const aria = v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트${v.expired ? ", 초기화됨, 새 값 대기 중" : ""}`
                        : `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} ${fmtVal(r)}`;
