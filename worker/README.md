@@ -66,7 +66,7 @@ python3 worker/scripts/make-deploy-code.py --name usage-dashboard-dev > /tmp/dep
 
 
 ## 개발에서 운영으로 올리기 (promote)
-코드만 올립니다. D1 데이터는 개발에서 운영으로 복사하지 않고, 시크릿·바인딩은 `keep_bindings` 로 그대로 둡니다. box 에는 wrangler 로그인이 없으니, 스크립트는 배포 파일만 만들고 실제 업로드는 Cloudflare 연결(MCP `execute`)로 합니다. `build`/`precheck`/`postcheck`/`diff` 는 운영에 배포하지 않습니다. 직접 배포는 `deploy`(아래 "매일 자정 자동 배포")만 합니다.
+코드만 올립니다. D1 데이터는 개발에서 운영으로 복사하지 않고, 시크릿·바인딩은 `keep_bindings` 로 그대로 둡니다(이 절은 수동 MCP 경로). box 에는 wrangler 로그인이 없으니, 스크립트는 배포 파일만 만들고 실제 업로드는 Cloudflare 연결(MCP `execute`)로 합니다. `build`/`precheck`/`postcheck`/`diff` 는 운영에 배포하지 않습니다. 직접 배포는 `deploy`(아래 "매일 자정 자동 배포")만 합니다.
 
 `make-deploy-code.py` 의 `--name` 기본값은 `usage-dashboard`(운영)입니다. 개발에 올릴 때만 `--name usage-dashboard-dev` 를 붙이세요. 빠뜨리면 운영에 나갑니다. promote 스크립트의 `build` 는 `--name usage-dashboard` 를 항상 명시하고, 생성된 코드가 운영 Worker·운영 D1 을 가리키는지 확인합니다. `--secrets` 는 쓰지 않습니다.
 
@@ -92,11 +92,13 @@ python3 worker/scripts/promote-dev-to-prod.py diff
 롤백: Cloudflare 대시보드 또는 API에서 Worker `usage-dashboard` 의 이전 배포(버전)로 되돌리면 됩니다. 소스 쪽은 git 이전 커밋이나 `web/server.py.bak-*` 백업을 씁니다. 시크릿은 배포 때 유지되므로 롤백해도 보통 그대로입니다.
 
 ## 매일 자정 자동 배포 (box cron)
-매일 00:00(Asia/Seoul)에 box 의 `supercronic` 이 `worker/scripts/nightly-promote.sh` 를 실행해 개발(`usage-dashboard-dev`)에서 검증된 코드를 운영(`usage-dashboard`)에 올립니다. MCP·wrangler 로그인 없이 Cloudflare REST API 를 직접 씁니다. 코드만 올리고 D1 데이터는 복사하지 않으며, 시크릿·바인딩은 `keep_bindings` 로 유지합니다. `deploy` 는 `usage-dashboard` 이외의 Worker 는 거부합니다.
+매일 00:00(Asia/Seoul)에 box 의 `supercronic` 이 `worker/scripts/nightly-promote.sh` 를 실행해 개발(`usage-dashboard-dev`)에서 검증된 코드를 운영(`usage-dashboard`)에 올립니다. MCP·wrangler 로그인 없이 Cloudflare REST API 를 직접 씁니다. 코드만 올리고 D1 데이터는 복사하지 않으며, 시크릿은 값 없이 `inherit`(Versions API)로 이어받습니다. Versions API 메타에는 허용된 필드만 보내므로 `observability`·logpush 같은 스크립트 설정은 건드리지 않고 기존 설정이 그대로 유지됩니다(수동 MCP 배포 `build` 경로만 `keep_bindings` 를 씁니다). `deploy` 는 `usage-dashboard` 이외의 Worker 는 거부합니다.
 
 순서(러너): ① 락(`flock`, 겹침 방지) ② main 브랜치·깨끗한 작업 트리 확인 후 `git pull --ff-only`(HEAD 가 origin/main 과 같아야 함) ③ `precheck` 11개 전부 통과 ④ `deploy`:
 API 로 현재 운영 배포 id 기록 → 개발·운영의 실제 올라가 있는 코드(index.js/html.js)를 읽어 비교 →
-개발(live) ≠ 로컬 main 이면 **거부(종료 3)**, 개발 = 운영이면 **건너뜀(종료 0)** → 아니면 업로드 → 바인딩(DB·시크릿 이름) 확인과 `postcheck` → 실패하면 기록해 둔 이전 배포로 롤백하고 다시 점검.
+개발(live) ≠ 로컬 main 이면 **거부(종료 3)** → **업로드 전 점검**: 가장 최근에 올린 버전이 지금 트래픽을 받는 버전과 같고 필수 바인딩(DB=운영 D1, 시크릿 5개 이름)을 가졌는지, 아니면 **거부(종료 7)** → 개발 = 운영이면 **건너뜀(종료 0)** → 아니면 ① Versions API 로 **배포 없이** 새 버전 업로드(시크릿은 값 없이 `inherit` + `bindings_inherit=strict`) ② 새 버전의 바인딩 확인 ③ 새 버전을 100% 로 배포 ④ 바인딩·`postcheck` → 실패하면 기록해 둔 이전 배포로 롤백하고 다시 점검. 응답을 잃은 요청은 버전/배포 목록을 다시 조회해(재시도) 실제로 반영됐는지 확인하고, 배포됐으면 점검·롤백을 합니다. 롤백 요청의 응답을 잃은 경우도 활성 배포를 다시 조회하고(한 번 재시도) 실제로 되돌아갔으면 종료 5 로 처리합니다.
+
+새 버전은 "가장 최근에 올린 버전"에서 시크릿을 이어받기 때문에, 롤백 뒤에는 실패한 버전이 최근 업로드로 남아 다음 실행이 종료 7 로 멈춰요(의도된 안전장치). 풀려면 대시보드(Worker → Deployments)에서 정상 버전을 100% 로 배포해 "최근 업로드 = 활성" 상태로 만드세요. 이 안전장치가 걸린 날은 `last-run.json` 의 `exit` 가 7 입니다.
 배포 코드는 메모리에서만 만들고 임시 파일은 만들지 않습니다(수동 MCP 배포용 `/tmp/deploy.js` 도 건드리지 않아요).
 
 | 종료 코드 | 뜻 |
@@ -105,8 +107,9 @@ API 로 현재 운영 배포 id 기록 → 개발·운영의 실제 올라가 �
 | 1 | git pull / precheck / API 읽기 실패 (배포 안 함) |
 | 2 | API 토큰 파일 없음·비어 있음·권한 과다(스코프 검사는 안 함) |
 | 3 | 개발(live)이 로컬 main 과 달라 운영 반영 거부 |
-| 4 | 업로드 실패(운영은 그대로) |
+| 4 | 버전 업로드·배포 생성 실패(운영은 그대로) |
 | 5 | 배포 후 점검 실패 → 이전 버전으로 롤백, 롤백 후 점검 통과 |
+| 7 | 업로드 전 안전 점검 거부(최근 업로드 ≠ 활성 버전, 필수 바인딩 없음 등) → **수동 확인 필요**, 아무것도 올리지 않음 |
 | 6 | 롤백 실패 또는 롤백 후에도 점검 실패 → **수동 확인 필요** |
 | 9 | 이미 다른 실행 중 |
 
@@ -117,10 +120,10 @@ API 로 현재 운영 배포 id 기록 → 개발·운영의 실제 올라가 �
 
 ```bash
 S=worker/scripts
-$S/start-nightly-cron.sh --status       # 스케줄러 상태 (running pid=… / not running)
+$S/start-nightly-cron.sh --status       # 이 crontab 으로 도는 supercronic 전부 (running pid=… / not running)
 $S/start-nightly-cron.sh                # 안 떠 있으면 시작 (멱등)
 $S/start-nightly-cron.sh --restart      # 재시작 (crontab 다시 생성)
-$S/start-nightly-cron.sh --stop         # 자동 배포 중지
+$S/start-nightly-cron.sh --stop         # 자동 배포 중지 (이 crontab 의 supercronic 전부)
 $S/nightly-promote.sh --dry-run         # 업로드·롤백만 빼고 전부 수행 (--force: 같아도 계획까지 출력)
 tail -n 40 ~/.local/state/usage-deploy/$(date +%F).log; cat ~/.local/state/usage-deploy/last-run.json
 python3 $S/promote-dev-to-prod.py status    # 운영 최근 배포 목록 (읽기 전용)

@@ -3,7 +3,8 @@
 
 precheck/build/postcheck/diff 는 운영에 배포하지 않습니다(build 는 MCP execute 용 파일만 만들어요).
 `deploy` 는 Cloudflare REST API 로 운영 Worker(usage-dashboard) 코드를 직접 올립니다(밤마다 cron 이 씀).
-시크릿·키 파일 내용은 읽거나 출력하거나 복사하거나 덮어쓰지 않습니다(deploy 도 keep_bindings). D1 데이터도 옮기지 않습니다.
+시크릿·키 파일 내용은 읽거나 출력하거나 복사하거나 덮어쓰지 않습니다. D1 데이터도 옮기지 않습니다.
+`build`(MCP execute 용 PUT)는 keep_bindings 로 시크릿을 유지하고, `deploy` 는 Versions API 업로드에서 시크릿을 값 없이 `inherit` 로 이어받습니다.
 
 사용법:
   python3 worker/scripts/promote-dev-to-prod.py precheck
@@ -21,8 +22,9 @@ deploy 의 API 토큰: 환경변수 CLOUDFLARE_API_TOKEN, 없으면 --token-file
 토큰 값은 어디에도 출력하지 않습니다.
 
 deploy 종료 코드: 0 성공 또는 변경 없음(건너뜀) / 1 점검·일반 실패 / 2 사용법·토큰 없음 /
-  3 개발(live)이 로컬 코드와 달라 운영 반영 거부 / 4 업로드 실패(운영은 그대로) /
-  5 배포 후 점검 실패 → 이전 버전으로 롤백했고 롤백 후 점검 통과 / 6 롤백 실패 또는 롤백 후에도 점검 실패(수동 확인 필요)
+  3 개발(live)이 로컬 코드와 달라 운영 반영 거부 / 4 업로드·배포 생성 실패(운영은 그대로) /
+  5 배포 후 점검 실패 → 이전 버전으로 롤백했고 롤백 후 점검 통과 / 6 롤백 실패 또는 롤백 후에도 점검 실패(수동 확인 필요) /
+  7 업로드 전 안전 점검 거부: 최신 업로드 버전이 활성 배포와 다르거나 필수 바인딩(DB·시크릿 이름)이 없음(수동 확인 필요, 아무것도 올리지 않음)
 """
 from __future__ import annotations
 
@@ -57,6 +59,7 @@ DEV_NAME = "usage-dashboard-dev"
 PROD_URL = "https://usage-dashboard.velar-agent.workers.dev"
 DEV_URL = "https://usage-dashboard-dev.velar-agent.workers.dev"
 HTTP_TIMEOUT = 20
+REQUIRED_BINDINGS = ("DB", "INGEST_KEY", "SESSION_SECRET", "RAW_SALT", "RAW_HASH", "RAW_ITERATIONS")
 ACCOUNT_ID = "a12d19c670e84a71f5acc26df16e47f7"
 CF_API = "https://api.cloudflare.com/client/v4"
 DEFAULT_TOKEN_FILE = Path("~/.config/usage-deploy/cf-token")
@@ -179,8 +182,10 @@ def sha16(data: bytes) -> str:
 
 
 class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):  # Authorization 헤더가 다른 호스트로 넘어가지 않게 리다이렉트는 따라가지 않아요
-        return None
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Authorization 헤더가 다른 호스트로 넘어가지 않게 리다이렉트는 따라가지 않고, 3xx 를 그대로 돌려줘요.
+        # (http() 가 상태 코드를 반환하고 cf_request 가 3xx 를 ApiError 로 바꿔요. newurl 은 메시지에 쓰지 않아요)
+        raise HTTPError(req.full_url, code, msg, headers, fp)
 
 
 _NO_REDIRECT_OPENER = build_opener(_NoRedirect)
@@ -593,6 +598,8 @@ def cf_request(token: str, method: str, path: str, data: bytes | None = None,
             last = ApiError(f"{method} {path} → HTTP {status}")
             time.sleep(3 * (attempt + 1))
             continue
+        if 300 <= status < 400:  # 리다이렉트는 따라가지 않아요(토큰 보호). Location 은 출력하지 않아요
+            raise ApiError(f"{method} {path} → HTTP {status} 리다이렉트는 따르지 않아요")
         if status >= 400:
             msg = ""
             j = look_json(body)
@@ -691,7 +698,34 @@ def rollback(token: str, prev: dict) -> None:
         "versions": [{"version_id": v["version_id"], "percentage": v["percentage"]} for v in prev["versions"]],
         "annotations": {"workers/message": "nightly promote auto-rollback"},
     }
-    cf_json(token, "POST", script_path(PROD_NAME) + "/deployments", payload)
+    path = script_path(PROD_NAME) + "/deployments"
+    try:
+        cf_json(token, "POST", path, payload)
+    except ApiError as e:
+        # 시크릿이 바뀐 상태에서 옛 버전으로 되돌리는 것은 기본적으로 막힐 수 있어요. 긴급 롤백이라 force 로 한 번 더 시도합니다.
+        print(f"WARN  롤백이 막혔어요({e}). force=true 로 다시 시도합니다.", file=sys.stderr)
+        cf_json(token, "POST", path + "?force=true", payload)
+
+
+def rollback_with_recovery(token: str, prev: dict) -> bool:
+    """롤백 요청. 응답을 못 받는 모호한 실패면 활성 배포를 다시 조회하고(재시도 포함), 서버가 실제로 되돌렸으면 성공으로 봐요."""
+    def restored() -> bool | None:
+        return same_versions(latest_deployment(token, PROD_NAME).get("versions", []), prev.get("versions", [])) or None
+
+    try:
+        rollback(token, prev)
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"WARN  롤백 요청 오류: {type(e).__name__}: {e}. 활성 배포를 다시 확인합니다.", file=sys.stderr)
+    if poll(restored, tries=3, wait=10):
+        print("INFO  서버에서 이미 이전 버전으로 되돌려져 있어요.", file=sys.stderr)
+        return True
+    try:
+        rollback(token, prev)  # 한 번 더(같은 버전으로의 롤백은 무해)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARN  롤백 재시도도 오류: {type(e).__name__}: {e}", file=sys.stderr)
+        return bool(poll(restored, tries=3, wait=10))
+    return True
 
 
 def post_deploy_check() -> bool:
@@ -730,15 +764,80 @@ def rollback_check(token: str, prev: dict) -> bool:
     return False
 
 
-def active_is_newest(token: str) -> bool:
-    """활성 배포가 가장 최근에 올린 버전 하나(100%)인지. 롤백 후 content 만 같아 보여 영원히 건너뛰는 일을 막아요."""
-    cur = latest_deployment(token, PROD_NAME)
-    vs = cur.get("versions", [])
+def list_versions(token: str) -> list[dict]:
     res = cf_json(token, "GET", script_path(PROD_NAME) + "/versions")
     items = res.get("items") if isinstance(res, dict) else None
-    if not items or len(vs) != 1 or vs[0].get("percentage") != 100:
-        return False
-    return vs[0].get("version_id") == items[0].get("id")
+    if not items:
+        raise ApiError("운영 Worker 의 버전 목록이 비어 있어요")
+    return items  # 최신 업로드가 먼저
+
+
+def version_binding_problems(token: str, version_id: str, prod_d1: str) -> list[str]:
+    """버전의 바인딩 이름·타입만 읽어 필수 항목(DB=운영 D1, 시크릿 5개)을 확인해요. 값은 API 가 주지 않아요."""
+    res = cf_json(token, "GET", script_path(PROD_NAME) + f"/versions/{version_id}")
+    blist = ((res or {}).get("resources") or {}).get("bindings") if isinstance(res, dict) else None  # type: ignore[union-attr]
+    if not isinstance(blist, list):
+        return ["버전의 바인딩 목록을 읽지 못했어요"]
+    by = {b.get("name"): b for b in blist if isinstance(b, dict)}
+    problems: list[str] = []
+    db = by.get("DB")
+    if not db or db.get("type") != "d1" or (db.get("database_id") or db.get("id")) != prod_d1:
+        problems.append("DB(d1, 운영 token-usage)")
+    for n in KEPT_SECRET_NAMES:
+        if (by.get(n) or {}).get("type") != "secret_text":
+            problems.append(n)
+    return problems
+
+
+def preupload_gate(token: str, prev: dict, prod_d1: str) -> str | None:
+    """업로드 전 안전 점검. 문제가 있으면 사유 문자열(→ 종료 7), 없으면 None.
+    새 버전은 '가장 최근에 올린 버전'에서 시크릿을 물려받으므로, 그 버전이 지금 트래픽을 받는 버전이고
+    필수 바인딩을 모두 갖고 있어야만 올립니다."""
+    vs = prev.get("versions", [])
+    if len(vs) != 1 or vs[0].get("percentage") != 100:
+        return f"활성 배포가 단일 버전 100% 가 아니에요: {fmt_dep(prev)}"
+    items = list_versions(token)
+    latest = items[0].get("id")
+    active = vs[0].get("version_id")
+    if latest != active:
+        return (f"최근에 올린 버전({latest})이 지금 트래픽을 받는 버전({active})과 달라요 "
+                "(이전 롤백·중단된 배포·수동 업로드 흔적). 시크릿을 잘못 물려받을 수 있어 올리지 않습니다")
+    problems = version_binding_problems(token, active, prod_d1)
+    if problems:
+        return f"활성 버전({active})에 필수 바인딩이 없거나 달라요: {', '.join(problems)}"
+    return None
+
+
+# POST /workers/scripts/{name}/versions 가 받는 메타 필드(Cloudflare API 문서 기준). 이 밖의 키는 보내지 않아요.
+# 예: observability·logpush 는 스크립트 설정(script-settings)에 있고 버전 업로드로 바꾸지 않습니다.
+VERSION_META_ALLOWED = ("main_module", "annotations", "bindings", "cache_options", "compatibility_date",
+                        "compatibility_flags", "exports", "package_dependencies", "usage_model")
+
+
+def version_upload_meta(meta: dict) -> dict:
+    """Versions API(배포 없이 업로드)용 메타. 허용 목록(VERSION_META_ALLOWED)의 필드만 담아요(observability 등은 제외).
+    시크릿은 값을 쓰지 않고 'inherit'(최신 업로드 버전에서 이어받기)로만 지정해요. keep_bindings 는 쓰지 않아요.
+    bindings_inherit=strict 쿼리와 함께 써서, 이어받지 못하면 조용히 빠지지 않고 업로드가 실패하게 합니다."""
+    d1 = [b for b in meta["bindings"] if b.get("type") == "d1"][0]
+    out = {k: v for k, v in meta.items() if k in VERSION_META_ALLOWED and k != "bindings"}
+    out["bindings"] = [{"type": "d1", "name": d1["name"], "database_id": d1["id"]}] + [
+        {"type": "inherit", "name": n} for n in KEPT_SECRET_NAMES
+    ]
+    return out
+
+
+def poll(fn, tries: int = 4, wait: float = 15.0):
+    """fn() 이 참 값을 줄 때까지 기다려요(응답을 잃은 요청이 서버에 반영됐는지 볼 때 씀). 끝내 없으면 None."""
+    for i in range(tries):
+        if i:
+            time.sleep(wait)
+        try:
+            v = fn()
+        except Exception:  # noqa: BLE001
+            v = None
+        if v:
+            return v
+    return None
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -754,18 +853,20 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         print(f"FAIL  deploy 는 {PROD_NAME} 만 대상으로 해요 (요청: {args.name!r})", file=sys.stderr)
         return 2
     token = read_token(args.token_file)
-    mode = "DRY-RUN (업로드·롤백 안 함)" if args.dry_run else "실제 배포"
+    mode = "DRY-RUN (업로드·배포·롤백 안 함)" if args.dry_run else "실제 배포"
     print(f"== deploy → {PROD_NAME} [{mode}] ==")
 
     try:
+        prod_d1, _ = load_d1_ids()
         meta, modules = local_deploy_payload()
-        print("OK    배포 코드 생성·검증 (대상 usage-dashboard, 운영 D1, keep_bindings=secret_text, 시크릿 값 없음)")
+        print("OK    배포 코드 생성·검증 (대상 usage-dashboard, 운영 D1, 시크릿 값 없음)")
         local = {n: modules[n].encode("utf-8") for n in MODULE_NAMES}
         print(f"INFO  로컬 코드 {sha_mods(local)}")
         prev = latest_deployment(token, PROD_NAME)
         print(f"OK    API 인증 확인. 현재 운영: {fmt_dep(prev)}")
         prod_live = live_modules(token, PROD_NAME)
         dev_live = live_modules(token, DEV_NAME)
+        gate = preupload_gate(token, prev, prod_d1)
     except (ApiError, RuntimeError) as e:
         print(f"FAIL  {e}", file=sys.stderr)
         return 1
@@ -777,61 +878,99 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         return 3
     print("OK    개발(live) = 로컬 코드")
 
+    if gate:
+        print(f"REFUSE  {gate}. 수동 확인이 필요해요(대시보드에서 정상 버전을 100% 로 배포하면 풀려요).", file=sys.stderr)
+        return 7
+    print("OK    업로드 전 점검: 최근 업로드 버전 = 활성 버전이고 필수 바인딩(DB, 시크릿 5개 이름)이 있어요")
+
     if all(prod_live.get(n) == dev_live.get(n) for n in MODULE_NAMES) and not args.force:
-        try:
-            newest = active_is_newest(token)
-        except (ApiError, RuntimeError) as e:
-            print(f"FAIL  활성 배포 확인 실패: {e}", file=sys.stderr)
-            return 1
-        if newest:
-            print("SKIP  개발과 운영 코드가 이미 같고 운영이 최신 버전이에요. 배포하지 않습니다.")
-            return 0
-        print("INFO  코드는 같지만 운영의 활성 배포가 최신 업로드가 아니에요(롤백 흔적). 다시 올립니다.")
+        print("SKIP  개발과 운영 코드가 이미 같고 운영이 최신 버전이에요. 배포하지 않습니다.")
+        return 0
     if args.dry_run:
-        print(f"DRY   운영에 올릴 예정: PUT {script_path(PROD_NAME)} (이전 {fmt_dep(prev)} 로 롤백 가능). 실제 호출은 하지 않았어요.")
+        print(f"DRY   예정: ① POST {script_path(PROD_NAME)}/versions?bindings_inherit=strict (배포 없이 업로드) "
+              f"② 새 버전 바인딩 확인 ③ POST .../deployments 100% ④ 점검 → 실패 시 {fmt_dep(prev)} 로 롤백. 실제 호출은 하지 않았어요.")
         return 0
 
-    body, ctype = build_multipart(meta, modules)
-    j: dict = {}
+    # ① 새 버전 업로드 (배포하지 않음 → 응답을 잃어도 트래픽에는 영향이 없어요)
+    latest_before = list_versions(token)[0].get("id")
+    body, ctype = build_multipart(version_upload_meta(meta), modules)
+    new_id = None
     try:
-        _, resp = cf_request(token, "PUT", script_path(PROD_NAME), data=body, content_type=ctype, timeout=120)
+        _, resp = cf_request(token, "POST", script_path(PROD_NAME) + "/versions?bindings_inherit=strict",
+                             data=body, content_type=ctype, timeout=120)
         jj = look_json(resp)
         if not isinstance(jj, dict) or not jj.get("success"):
-            raise ApiError("업로드 응답이 success 가 아니에요")
-        j = jj
+            raise ApiError("버전 업로드 응답이 success 가 아니에요")
+        new_id = (jj.get("result") or {}).get("id")
+        if not new_id:
+            raise ApiError("버전 업로드 응답에 버전 id 가 없어요")
     except Exception as e:  # noqa: BLE001
-        # 응답을 못 받았어도 서버에는 반영됐을 수 있어요. 최신 배포가 기록해 둔 것과 같을 때만 "안 올라감"으로 봅니다.
-        try:
-            changed = latest_deployment(token, PROD_NAME).get("id") != prev.get("id")
-        except Exception:  # noqa: BLE001
-            changed = True  # 확인 못 하면 안전하게 롤백 경로로(같은 버전으로의 롤백은 무해)
-        print(f"FAIL  업로드 응답 오류: {type(e).__name__}: {e}", file=sys.stderr)
-        if not changed:
-            print("      운영 배포 id 가 그대로예요. 운영은 이전 상태입니다.", file=sys.stderr)
-            return 4
-        print("      운영 배포가 바뀌었거나 확인할 수 없어요. 롤백 경로로 진행합니다.", file=sys.stderr)
+        print(f"FAIL  버전 업로드 오류: {type(e).__name__}: {e}", file=sys.stderr)
+        def _new_version_id() -> str | None:
+            cur_id = list_versions(token)[0].get("id")  # 한 번만 조회해서 비교와 보고에 같은 값을 써요
+            return cur_id if cur_id != latest_before else None
 
-    # 여기부터는 업로드가 이미 반영됐을 수 있으므로, 어떤 오류든 롤백으로 이어져요.
+        seen = poll(_new_version_id)
+        if seen:
+            print(f"      응답은 못 받았지만 새 버전 {seen} 이 올라가 있어요. 배포하지 않았으니 트래픽은 이전 버전 그대로예요. "
+                  "다음 실행은 수동 확인 전까지 거부(종료 7)됩니다.", file=sys.stderr)
+        else:
+            print("      새 버전이 보이지 않아요. 운영은 그대로입니다.", file=sys.stderr)
+        return 4
+    print(f"OK    새 버전 업로드(배포 전): {new_id}")
+
+    # ② 배포 전에 새 버전의 바인딩(DB·시크릿 이름)을 확인
+    try:
+        problems = version_binding_problems(token, new_id, prod_d1)
+    except (ApiError, RuntimeError) as e:
+        problems = [f"확인 실패: {e}"]
+    if problems:
+        print(f"FAIL  새 버전({new_id})에 필수 바인딩이 없어요: {', '.join(problems)}. 배포하지 않았어요(운영은 그대로, 다음 실행은 종료 7).", file=sys.stderr)
+        return 4
+    print("OK    새 버전 바인딩 확인: DB(운영 D1) + 시크릿 5개 이름")
+
+    # ③ 100% 배포
+    payload = {"strategy": "percentage", "versions": [{"version_id": new_id, "percentage": 100}],
+               "annotations": {"workers/message": "nightly promote dev -> prod"}}
+    try:
+        cf_json(token, "POST", script_path(PROD_NAME) + "/deployments", payload)
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL  배포 생성 오류: {type(e).__name__}: {e}", file=sys.stderr)
+        # 응답을 잃었어도 서버에서 배포됐을 수 있어요. 새 배포가 보이면 점검·롤백 경로로 갑니다.
+        dep = poll(lambda: (latest_deployment(token, PROD_NAME).get("id") != prev.get("id")) or None)
+        if not dep:
+            print("      새 배포가 보이지 않아요. 운영은 이전 버전 그대로입니다.", file=sys.stderr)
+            return 4
+        print("      새 배포가 확인됐어요. 점검을 진행합니다.", file=sys.stderr)
+
+    # ④ 배포 후 확인. 어떤 오류든 롤백으로 이어져요.
     healthy = False
     try:
-        res = j.get("result") or {}
-        # PUT 응답에는 bindings 가 없어서 별도 읽기 API 로 확인해요 (이름·타입만, 값은 오지 않아요)
-        blist = cf_json(token, "GET", script_path(PROD_NAME) + "/bindings")
-        names = {b.get("name") for b in (blist or []) if isinstance(b, dict)}  # type: ignore[union-attr]
-        print(f"OK    업로드 완료 modified_on={res.get('modified_on')} bindings={sorted(n for n in names if n)}")
-        # 업로드 응답을 못 받은 경우까지 포함해, 운영에 실제로 새 코드가 올라가 있어야 성공으로 봅니다
-        now = {}
-        for _ in range(3):
-            now = live_modules(token, PROD_NAME)
-            if all(now.get(n) == local[n] for n in MODULE_NAMES):
-                break
-            time.sleep(3)
-        if not all(now.get(n) == local[n] for n in MODULE_NAMES):
-            print(f"FAIL  운영 코드가 올리려던 코드와 달라요 {sha_mods(now)}", file=sys.stderr)
-        elif not {"DB", *KEPT_SECRET_NAMES} <= names:  # DB + 시크릿 이름이 그대로여야 정상
-            print("FAIL  업로드 후 바인딩(DB/시크릿 이름)이 빠졌어요.", file=sys.stderr)
+        cur = latest_deployment(token, PROD_NAME)
+        if not same_versions(cur.get("versions", []), [{"version_id": new_id, "percentage": 100}]):
+            print(f"FAIL  활성 배포가 새 버전이 아니에요: {fmt_dep(cur)}", file=sys.stderr)
         else:
-            healthy = post_deploy_check()
+            blist = cf_json(token, "GET", script_path(PROD_NAME) + "/bindings")  # 이름·타입만, 값은 오지 않아요
+            names = {b.get("name") for b in (blist or []) if isinstance(b, dict)}  # type: ignore[union-attr]
+            print(f"OK    배포됨 {fmt_dep(cur)} bindings={sorted(n for n in names if n)}")
+            try:  # 로그·관측 설정은 스크립트 설정이라 버전 업로드로 바뀌지 않아야 해요(읽기 전용 확인, 실패해도 무시)
+                st = cf_json(token, "GET", script_path(PROD_NAME) + "/script-settings")
+                obs = (st or {}).get("observability") or {}  # type: ignore[union-attr]
+                print(f"INFO  observability.enabled={obs.get('enabled')} (스크립트 설정, 업로드로 바꾸지 않음)")
+            except Exception:  # noqa: BLE001
+                pass
+            now = {}
+            for _ in range(3):
+                now = live_modules(token, PROD_NAME)
+                if all(now.get(n) == local[n] for n in MODULE_NAMES):
+                    break
+                time.sleep(3)
+            if not all(now.get(n) == local[n] for n in MODULE_NAMES):
+                print(f"FAIL  운영 코드가 올리려던 코드와 달라요 {sha_mods(now)}", file=sys.stderr)
+            elif not set(REQUIRED_BINDINGS) <= names:
+                print("FAIL  배포 후 바인딩(DB/시크릿 이름)이 빠졌어요.", file=sys.stderr)
+            else:
+                healthy = post_deploy_check()
     except Exception as e:  # noqa: BLE001
         print(f"FAIL  배포 후 확인 중 오류: {type(e).__name__}: {e}", file=sys.stderr)
     if healthy:
@@ -839,13 +978,11 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         return 0
 
     print(f"ROLLBACK  이전 배포로 되돌립니다: {fmt_dep(prev)}", file=sys.stderr)
-    try:
-        rollback(token, prev)
-    except Exception as e:  # noqa: BLE001
-        print(f"CRITICAL  롤백 API 실패: {e}. 수동 확인이 필요해요!", file=sys.stderr)
+    if not rollback_with_recovery(token, prev):
+        print("CRITICAL  롤백 요청이 실패했고 활성 배포도 이전 버전이 아니에요. 수동 확인이 필요해요!", file=sys.stderr)
         return 6
     if rollback_check(token, prev):
-        print("OK    롤백 후 운영 점검 통과", file=sys.stderr)
+        print("OK    롤백 후 운영 점검 통과(새 버전이 최신 업로드로 남아 다음 실행은 수동 확인 전까지 거부돼요)", file=sys.stderr)
         return 5
     print("CRITICAL  롤백했지만 운영 점검이 통과하지 않아요. 수동 확인이 필요해요!", file=sys.stderr)
     return 6

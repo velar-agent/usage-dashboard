@@ -4,8 +4,9 @@
 #
 # 사용법: nightly-promote.sh [--dry-run] [--force]
 #   --dry-run  업로드·롤백만 빼고 전부 수행(git pull, precheck, API 읽기, 비교)
-# 종료 코드: 0 성공/변경 없음, 1 점검·git 실패, 2 토큰 없음, 3 개발≠main, 4 업로드 실패,
-#            5 배포 후 점검 실패→롤백됨, 6 롤백 실패(수동 확인), 9 이미 실행 중, 10 사용법
+# 종료 코드: 0 성공/변경 없음, 1 점검·git 실패, 2 토큰 없음, 3 개발≠main, 4 버전 업로드·배포 생성 실패,
+#            5 배포 후 점검 실패→롤백됨, 6 롤백 실패(수동 확인), 7 업로드 전 안전 점검 거부(수동 확인),
+#            9 이미 실행 중, 10 사용법
 set -u -o pipefail
 export TZ=Asia/Seoul
 export LC_ALL=C.UTF-8 PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"
