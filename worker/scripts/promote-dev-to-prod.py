@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """usage-dashboard-dev 에서 검증한 로컬 코드를 운영 Worker(usage-dashboard)에 올리기 위한 준비/검증 스크립트.
 
-이 스크립트는 운영에 배포하지 않습니다. Cloudflare MCP execute 는 호출하지 않습니다.
-시크릿·키 파일 내용은 읽거나 출력하거나 복사하거나 덮어쓰지 않습니다. D1 데이터도 옮기지 않습니다.
+precheck/build/postcheck/diff 는 운영에 배포하지 않습니다(build 는 MCP execute 용 파일만 만들어요).
+`deploy` 는 Cloudflare REST API 로 운영 Worker(usage-dashboard) 코드를 직접 올립니다(밤마다 cron 이 씀).
+시크릿·키 파일 내용은 읽거나 출력하거나 복사하거나 덮어쓰지 않습니다(deploy 도 keep_bindings). D1 데이터도 옮기지 않습니다.
 
 사용법:
   python3 worker/scripts/promote-dev-to-prod.py precheck
@@ -11,19 +12,35 @@
   # 그다음: user-Cloudflare execute 에 code="$file:/tmp/deploy.js"
   python3 worker/scripts/promote-dev-to-prod.py postcheck
   python3 worker/scripts/promote-dev-to-prod.py diff
+  python3 worker/scripts/promote-dev-to-prod.py deploy --dry-run   # REST API 직접 배포. 업로드·롤백만 빼고 전부 수행
+  python3 worker/scripts/promote-dev-to-prod.py deploy             # 실제 운영 배포 (API 토큰 필요, 아래 참고)
+  python3 worker/scripts/promote-dev-to-prod.py deploy --force     # 변경이 없어도 다시 올림
+  python3 worker/scripts/promote-dev-to-prod.py status             # 운영 최근 배포 목록(읽기 전용)
+
+deploy 의 API 토큰: 환경변수 CLOUDFLARE_API_TOKEN, 없으면 --token-file (기본 ~/.config/usage-deploy/cf-token).
+토큰 값은 어디에도 출력하지 않습니다.
+
+deploy 종료 코드: 0 성공 또는 변경 없음(건너뜀) / 1 점검·일반 실패 / 2 사용법·토큰 없음 /
+  3 개발(live)이 로컬 코드와 달라 운영 반영 거부 / 4 업로드 실패(운영은 그대로) /
+  5 배포 후 점검 실패 → 이전 버전으로 롤백했고 롤백 후 점검 통과 / 6 롤백 실패 또는 롤백 후에도 점검 실패(수동 확인 필요)
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import email
+from http.client import HTTPException
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 SCRIPTS = Path(__file__).resolve().parent
 WORKER = SCRIPTS.parent
@@ -40,6 +57,11 @@ DEV_NAME = "usage-dashboard-dev"
 PROD_URL = "https://usage-dashboard.velar-agent.workers.dev"
 DEV_URL = "https://usage-dashboard-dev.velar-agent.workers.dev"
 HTTP_TIMEOUT = 20
+ACCOUNT_ID = "a12d19c670e84a71f5acc26df16e47f7"
+CF_API = "https://api.cloudflare.com/client/v4"
+DEFAULT_TOKEN_FILE = Path("~/.config/usage-deploy/cf-token")
+KEPT_SECRET_NAMES = ("INGEST_KEY", "SESSION_SECRET", "RAW_SALT", "RAW_HASH", "RAW_ITERATIONS")
+MODULE_NAMES = ("index.js", "html.js")
 RECORDS_KEYS = ("records", "count", "total", "limit", "skipped", "generated_at", "timezone")
 USER_AGENT = "token-usage-promote-script"
 
@@ -156,6 +178,14 @@ def sha16(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):  # Authorization 헤더가 다른 호스트로 넘어가지 않게 리다이렉트는 따라가지 않아요
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirect)
+
+
 def http(method: str, url: str, data: bytes | None = None, headers: dict[str, str] | None = None,
          timeout: int = HTTP_TIMEOUT) -> tuple[int, dict[str, str], bytes]:
     hdrs = {"User-Agent": USER_AGENT}
@@ -163,13 +193,16 @@ def http(method: str, url: str, data: bytes | None = None, headers: dict[str, st
         hdrs.update(headers)
     req = Request(url, data=data, headers=hdrs, method=method)
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        opener = _NO_REDIRECT_OPENER.open if "Authorization" in hdrs else urlopen
+        with opener(req, timeout=timeout) as resp:
             return resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
     except HTTPError as e:
         body = e.read() if e.fp else b""
         return e.code, {k.lower(): v for k, v in (e.headers.items() if e.headers else [])}, body
     except URLError as e:
         raise RuntimeError(f"{url} 요청 실패: {e.reason}") from e
+    except (OSError, HTTPException) as e:  # 타임아웃, 연결 끊김, 본문 읽기 중단 등
+        raise RuntimeError(f"{url} 요청 실패: {type(e).__name__}: {e}") from e
 
 
 def look_json(body: bytes) -> object | None:
@@ -211,7 +244,9 @@ def smoke(checks: Checks, base: str, label: str, expect_html: str | None = None)
 
     # /api/records (데이터 내용은 출력하지 않음)
     try:
-        status, _, body = http("GET", base + "/api/records?limit=1")
+        # 운영은 엣지 캐시(20초)를 피하려고 매번 다른 쿼리를 붙여 실제 D1 읽기를 확인해요
+        bust = f"&_={int(time.time() * 1000)}" if label == "prod" else ""
+        status, _, body = http("GET", base + "/api/records?limit=1" + bust)
         payload = look_json(body)
         if status != 200 or not isinstance(payload, dict):
             checks.fail(f"{label} GET /api/records → {status} (200 JSON 이 필요해요)")
@@ -427,7 +462,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 def cmd_postcheck(args: argparse.Namespace) -> int:
     checks = Checks()
-    out = Path(args.output).expanduser()
+    out = Path(args.output).expanduser() if args.output is not None else None
     print("== postcheck (운영 읽기 전용 확인, 시크릿 미사용) ==")
     try:
         index_html = load_index_html()
@@ -445,7 +480,9 @@ def cmd_postcheck(args: argparse.Namespace) -> int:
 
     smoke(checks, PROD_URL, "prod", expect_html=expected)
 
-    if out.is_file():
+    if args.output is None:
+        pass
+    elif out.is_file():
         out.unlink()
         checks.ok(f"배포 파일을 삭제했어요: {out}")
     else:
@@ -512,9 +549,311 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return checks.exit()
 
 
+# ---------------------------------------------------------------------------
+# REST API 직접 배포 (deploy / status)
+# ---------------------------------------------------------------------------
+class ApiError(RuntimeError):
+    pass
+
+
+def token_fail(msg: str) -> "NoReturn":  # type: ignore[name-defined]
+    print(msg, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def read_token(token_file: str | None) -> str:
+    tok = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+    if not tok:
+        path = Path(token_file or DEFAULT_TOKEN_FILE).expanduser()
+        if not path.is_file():
+            token_fail(f"FAIL  Cloudflare API 토큰이 없어요. CLOUDFLARE_API_TOKEN 또는 {path} (권한 600) 가 필요해요.")
+        if path.stat().st_mode & 0o077:
+            token_fail(f"FAIL  {path} 권한이 너무 열려 있어요. chmod 600 하세요.")
+        tok = path.read_text().strip()
+    if not tok:
+        token_fail("FAIL  Cloudflare API 토큰이 비어 있어요.")
+    return tok
+
+
+def cf_request(token: str, method: str, path: str, data: bytes | None = None,
+               content_type: str | None = None, timeout: int = 60) -> tuple[dict[str, str], bytes]:
+    """Cloudflare REST 호출. 실패 시 토큰이 들어가지 않은 메시지로 ApiError."""
+    headers = {"Authorization": f"Bearer {token}"}
+    if content_type:
+        headers["Content-Type"] = content_type
+    last: Exception | None = None
+    for attempt in range(3 if method == "GET" else 1):
+        try:
+            status, hdrs, body = http(method, CF_API + path, data=data, headers=headers, timeout=timeout)
+        except RuntimeError as e:  # 네트워크 오류
+            last = e
+            time.sleep(3 * (attempt + 1))
+            continue
+        if status >= 500 and method == "GET":
+            last = ApiError(f"{method} {path} → HTTP {status}")
+            time.sleep(3 * (attempt + 1))
+            continue
+        if status >= 400:
+            msg = ""
+            j = look_json(body)
+            if isinstance(j, dict):
+                msg = "; ".join(str(e.get("code", "")) + " " + str(e.get("message", "")) for e in (j.get("errors") or []) if isinstance(e, dict))
+            raise ApiError(f"{method} {path} → HTTP {status} {msg}".strip())
+        return hdrs, body
+    raise ApiError(f"{method} {path} 실패: {last}")
+
+
+def cf_json(token: str, method: str, path: str, payload: object | None = None) -> object:
+    data = json.dumps(payload).encode() if payload is not None else None
+    _, body = cf_request(token, method, path, data=data, content_type="application/json" if data else None)
+    j = look_json(body)
+    if not isinstance(j, dict) or not j.get("success"):
+        raise ApiError(f"{method} {path} 응답이 success 가 아니에요")
+    return j.get("result")
+
+
+def script_path(name: str) -> str:
+    if name != PROD_NAME and name != DEV_NAME:
+        raise SystemExit(f"FAIL  알 수 없는 Worker 이름 {name!r}")
+    return f"/accounts/{ACCOUNT_ID}/workers/scripts/{name}"
+
+
+def latest_deployment(token: str, name: str) -> dict:
+    res = cf_json(token, "GET", script_path(name) + "/deployments")
+    deps = res.get("deployments") if isinstance(res, dict) else None
+    if not deps:
+        raise ApiError(f"{name} 배포 기록이 없어요")
+    return deps[0]  # 최신이 먼저
+
+
+def fmt_dep(d: dict) -> str:
+    vs = ",".join(f"{v.get('version_id')}@{v.get('percentage')}%" for v in d.get("versions", []))
+    return f"deployment {d.get('id')} ({d.get('created_on')}) versions[{vs}]"
+
+
+def live_modules(token: str, name: str) -> dict[str, bytes]:
+    hdrs, body = cf_request(token, "GET", script_path(name) + "/content/v2")
+    ct = hdrs.get("content-type", "")
+    msg = email.message_from_bytes(b"Content-Type: " + ct.encode() + b"\r\n\r\n" + body)
+    out: dict[str, bytes] = {}
+    for part in msg.get_payload():  # type: ignore[union-attr]
+        n = part.get_param("name", "", "content-disposition")
+        if n:
+            out[n] = part.get_payload(decode=True)
+    return out
+
+
+def local_deploy_payload() -> tuple[dict, dict[str, str]]:
+    """make-deploy-code.py 로 만든 코드를 검증한 뒤 meta/modules 를 꺼냅니다(로직을 복제하지 않고 재사용).
+    파일로 쓰지 않으므로 지울 임시 파일이 없습니다."""
+    prod_d1, _ = load_d1_ids()
+    r = subprocess.run([sys.executable, str(MAKE_DEPLOY), "--name", PROD_NAME],
+                       capture_output=True, text=True, cwd=str(WORKER))
+    if r.returncode != 0:
+        raise RuntimeError(f"make-deploy-code.py 실패 (exit {r.returncode})")
+    errors = verify_deploy_js(r.stdout, prod_d1)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    meta = extract_js_json(r.stdout, "const meta = ")
+    modules = extract_js_json(r.stdout, "const modules = ")
+    if not isinstance(meta, dict) or not isinstance(modules, dict) or set(modules) != set(MODULE_NAMES):
+        raise RuntimeError("생성된 코드에서 meta/modules 를 읽지 못했어요")
+    if meta.get("keep_bindings") != ["secret_text"] or meta.get("main_module") != "index.js":
+        raise RuntimeError("meta 가 예상과 달라요(keep_bindings/main_module)")
+    return meta, modules
+
+
+def build_multipart(meta: dict, modules: dict[str, str]) -> tuple[bytes, str]:
+    b = "----usage-deploy-" + uuid.uuid4().hex
+    parts: list[bytes] = []
+
+    def add(name: str, ctype: str, data: bytes, filename: str | None = None) -> None:
+        fn = f'; filename="{filename}"' if filename else ""
+        parts.append(
+            (f"--{b}\r\nContent-Disposition: form-data; name=\"{name}\"{fn}\r\nContent-Type: {ctype}\r\n\r\n").encode()
+            + data + b"\r\n"
+        )
+
+    add("metadata", "application/json", json.dumps(meta, ensure_ascii=False).encode("utf-8"))
+    for n in MODULE_NAMES:
+        add(n, "application/javascript+module", modules[n].encode("utf-8"), n)
+    parts.append(f"--{b}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={b}"
+
+
+def sha_mods(mods: dict[str, bytes]) -> dict[str, str]:
+    return {n: sha16(mods[n]) for n in sorted(mods)}
+
+
+def rollback(token: str, prev: dict) -> None:
+    payload = {
+        "strategy": "percentage",
+        "versions": [{"version_id": v["version_id"], "percentage": v["percentage"]} for v in prev["versions"]],
+        "annotations": {"workers/message": "nightly promote auto-rollback"},
+    }
+    cf_json(token, "POST", script_path(PROD_NAME) + "/deployments", payload)
+
+
+def post_deploy_check() -> bool:
+    """배포 직후 운영 점검. 전파 지연을 고려해 한 번 더 시도해요."""
+    ns = argparse.Namespace(output=None)
+    for i, wait in enumerate((5, 20)):
+        time.sleep(wait)
+        print(f"-- postcheck 시도 {i + 1}")
+        if cmd_postcheck(ns) == 0:
+            return True
+    return False
+
+
+def same_versions(a: list, b: list) -> bool:
+    f = lambda vs: sorted((v.get("version_id"), v.get("percentage")) for v in vs)  # noqa: E731
+    return f(a) == f(b)
+
+
+def rollback_check(token: str, prev: dict) -> bool:
+    """롤백 뒤 점검: 활성 배포의 버전이 기록해 둔 이전 배포와 같고, 화면(/) 내용 비교 없이 /health·/·/api/records·ingest 401 이 정상인지."""
+    for i, wait in enumerate((5, 20)):  # 전파 지연을 고려해 최대 두 번
+        time.sleep(wait)
+        print(f"-- 롤백 후 점검 시도 {i + 1}")
+        checks = Checks()
+        try:
+            cur = latest_deployment(token, PROD_NAME)
+            if same_versions(cur.get("versions", []), prev.get("versions", [])):
+                checks.ok(f"활성 배포가 이전 버전으로 돌아왔어요: {fmt_dep(cur)}")
+            else:
+                checks.fail(f"활성 배포가 이전 버전과 달라요: {fmt_dep(cur)}")
+            smoke(checks, PROD_URL, "prod", expect_html=None)
+        except Exception as e:  # noqa: BLE001
+            checks.fail(f"롤백 점검 중 오류: {type(e).__name__}: {e}")
+        if checks.exit() == 0:
+            return True
+    return False
+
+
+def active_is_newest(token: str) -> bool:
+    """활성 배포가 가장 최근에 올린 버전 하나(100%)인지. 롤백 후 content 만 같아 보여 영원히 건너뛰는 일을 막아요."""
+    cur = latest_deployment(token, PROD_NAME)
+    vs = cur.get("versions", [])
+    res = cf_json(token, "GET", script_path(PROD_NAME) + "/versions")
+    items = res.get("items") if isinstance(res, dict) else None
+    if not items or len(vs) != 1 or vs[0].get("percentage") != 100:
+        return False
+    return vs[0].get("version_id") == items[0].get("id")
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    token = read_token(args.token_file)
+    res = cf_json(token, "GET", script_path(PROD_NAME) + "/deployments")
+    for d in (res.get("deployments") or [])[:5]:  # type: ignore[union-attr]
+        print(fmt_dep(d))
+    return 0
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    if args.name != PROD_NAME:
+        print(f"FAIL  deploy 는 {PROD_NAME} 만 대상으로 해요 (요청: {args.name!r})", file=sys.stderr)
+        return 2
+    token = read_token(args.token_file)
+    mode = "DRY-RUN (업로드·롤백 안 함)" if args.dry_run else "실제 배포"
+    print(f"== deploy → {PROD_NAME} [{mode}] ==")
+
+    try:
+        meta, modules = local_deploy_payload()
+        print("OK    배포 코드 생성·검증 (대상 usage-dashboard, 운영 D1, keep_bindings=secret_text, 시크릿 값 없음)")
+        local = {n: modules[n].encode("utf-8") for n in MODULE_NAMES}
+        print(f"INFO  로컬 코드 {sha_mods(local)}")
+        prev = latest_deployment(token, PROD_NAME)
+        print(f"OK    API 인증 확인. 현재 운영: {fmt_dep(prev)}")
+        prod_live = live_modules(token, PROD_NAME)
+        dev_live = live_modules(token, DEV_NAME)
+    except (ApiError, RuntimeError) as e:
+        print(f"FAIL  {e}", file=sys.stderr)
+        return 1
+    print(f"INFO  운영(live) {sha_mods(prod_live)}")
+    print(f"INFO  개발(live) {sha_mods(dev_live)}")
+
+    if any(dev_live.get(n) != local[n] for n in MODULE_NAMES):
+        print("FAIL  개발(live) 코드가 로컬(origin/main 과 같은 체크아웃) 코드와 달라요. 개발에서 검증되지 않은 코드는 운영에 올리지 않습니다.", file=sys.stderr)
+        return 3
+    print("OK    개발(live) = 로컬 코드")
+
+    if all(prod_live.get(n) == dev_live.get(n) for n in MODULE_NAMES) and not args.force:
+        try:
+            newest = active_is_newest(token)
+        except (ApiError, RuntimeError) as e:
+            print(f"FAIL  활성 배포 확인 실패: {e}", file=sys.stderr)
+            return 1
+        if newest:
+            print("SKIP  개발과 운영 코드가 이미 같고 운영이 최신 버전이에요. 배포하지 않습니다.")
+            return 0
+        print("INFO  코드는 같지만 운영의 활성 배포가 최신 업로드가 아니에요(롤백 흔적). 다시 올립니다.")
+    if args.dry_run:
+        print(f"DRY   운영에 올릴 예정: PUT {script_path(PROD_NAME)} (이전 {fmt_dep(prev)} 로 롤백 가능). 실제 호출은 하지 않았어요.")
+        return 0
+
+    body, ctype = build_multipart(meta, modules)
+    j: dict = {}
+    try:
+        _, resp = cf_request(token, "PUT", script_path(PROD_NAME), data=body, content_type=ctype, timeout=120)
+        jj = look_json(resp)
+        if not isinstance(jj, dict) or not jj.get("success"):
+            raise ApiError("업로드 응답이 success 가 아니에요")
+        j = jj
+    except Exception as e:  # noqa: BLE001
+        # 응답을 못 받았어도 서버에는 반영됐을 수 있어요. 최신 배포가 기록해 둔 것과 같을 때만 "안 올라감"으로 봅니다.
+        try:
+            changed = latest_deployment(token, PROD_NAME).get("id") != prev.get("id")
+        except Exception:  # noqa: BLE001
+            changed = True  # 확인 못 하면 안전하게 롤백 경로로(같은 버전으로의 롤백은 무해)
+        print(f"FAIL  업로드 응답 오류: {type(e).__name__}: {e}", file=sys.stderr)
+        if not changed:
+            print("      운영 배포 id 가 그대로예요. 운영은 이전 상태입니다.", file=sys.stderr)
+            return 4
+        print("      운영 배포가 바뀌었거나 확인할 수 없어요. 롤백 경로로 진행합니다.", file=sys.stderr)
+
+    # 여기부터는 업로드가 이미 반영됐을 수 있으므로, 어떤 오류든 롤백으로 이어져요.
+    healthy = False
+    try:
+        res = j.get("result") or {}
+        # PUT 응답에는 bindings 가 없어서 별도 읽기 API 로 확인해요 (이름·타입만, 값은 오지 않아요)
+        blist = cf_json(token, "GET", script_path(PROD_NAME) + "/bindings")
+        names = {b.get("name") for b in (blist or []) if isinstance(b, dict)}  # type: ignore[union-attr]
+        print(f"OK    업로드 완료 modified_on={res.get('modified_on')} bindings={sorted(n for n in names if n)}")
+        # 업로드 응답을 못 받은 경우까지 포함해, 운영에 실제로 새 코드가 올라가 있어야 성공으로 봅니다
+        now = {}
+        for _ in range(3):
+            now = live_modules(token, PROD_NAME)
+            if all(now.get(n) == local[n] for n in MODULE_NAMES):
+                break
+            time.sleep(3)
+        if not all(now.get(n) == local[n] for n in MODULE_NAMES):
+            print(f"FAIL  운영 코드가 올리려던 코드와 달라요 {sha_mods(now)}", file=sys.stderr)
+        elif not {"DB", *KEPT_SECRET_NAMES} <= names:  # DB + 시크릿 이름이 그대로여야 정상
+            print("FAIL  업로드 후 바인딩(DB/시크릿 이름)이 빠졌어요.", file=sys.stderr)
+        else:
+            healthy = post_deploy_check()
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL  배포 후 확인 중 오류: {type(e).__name__}: {e}", file=sys.stderr)
+    if healthy:
+        print("OK    배포 성공")
+        return 0
+
+    print(f"ROLLBACK  이전 배포로 되돌립니다: {fmt_dep(prev)}", file=sys.stderr)
+    try:
+        rollback(token, prev)
+    except Exception as e:  # noqa: BLE001
+        print(f"CRITICAL  롤백 API 실패: {e}. 수동 확인이 필요해요!", file=sys.stderr)
+        return 6
+    if rollback_check(token, prev):
+        print("OK    롤백 후 운영 점검 통과", file=sys.stderr)
+        return 5
+    print("CRITICAL  롤백했지만 운영 점검이 통과하지 않아요. 수동 확인이 필요해요!", file=sys.stderr)
+    return 6
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="usage-dashboard-dev 에서 검증한 로컬 코드를 운영(usage-dashboard)에 올리기 위한 준비/검증. 이 스크립트는 배포하지 않습니다.",
+        description="usage-dashboard-dev 에서 검증한 로컬 코드를 운영(usage-dashboard)에 올리기 위한 준비/검증, 그리고 deploy(REST API 직접 배포).",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -528,7 +867,19 @@ def main() -> int:
 
     sub.add_parser("diff", help="개발·운영 /health 와 / 화면 비교 (읽기 전용)")
 
+    d = sub.add_parser("deploy", help="REST API 로 운영(usage-dashboard) 직접 배포 (실패 시 자동 롤백)")
+    d.add_argument("--dry-run", action="store_true", help="업로드·롤백만 빼고 전부 수행")
+    d.add_argument("--force", action="store_true", help="개발·운영 코드가 같아도 다시 올림")
+    d.add_argument("--name", default=PROD_NAME, help=f"{PROD_NAME} 외에는 거부")
+    d.add_argument("--token-file", default=None, help=f"토큰 파일 (기본 {DEFAULT_TOKEN_FILE}, CLOUDFLARE_API_TOKEN 이 우선)")
+    st = sub.add_parser("status", help="운영 최근 배포 목록(읽기 전용, API 토큰 필요)")
+    st.add_argument("--token-file", default=None)
+
     args = p.parse_args()
+    if args.cmd == "deploy":
+        return cmd_deploy(args)
+    if args.cmd == "status":
+        return cmd_status(args)
     if args.cmd == "precheck":
         return cmd_precheck(args)
     if args.cmd == "build":

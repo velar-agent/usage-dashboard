@@ -11,3 +11,7 @@ __pycache__/
 raw-auth.json
 .dev.vars
 session-secret*.txt
+
+# nightly deploy: API 토큰 등은 repo 밖(~/.config/usage-deploy)에 둡니다. 혹시 모를 실수 방지
+cf-token
+*.cf-token
