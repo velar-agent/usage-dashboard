@@ -17,7 +17,7 @@
 - `wrangler.toml` — wrangler 로 배포할 때 쓰는 설정
 - `scripts/make-deploy-code.py` — Cloudflare 연결(MCP `execute`)로 올릴 코드를 만들어요
 - `scripts/promote-dev-to-prod.py` — 개발(usage-dashboard-dev)에서 검증한 코드를 운영(usage-dashboard)에 올리기 위한 준비/검증, 그리고 `deploy`(Cloudflare REST API 로 운영 직접 배포, 실패 시 자동 롤백)
-- `scripts/nightly-promote.sh` — 매일 00:00(KST) cron 이 돌리는 러너(git pull → precheck → deploy). `scripts/start-nightly-cron.sh` — 그 스케줄러(supercronic)를 띄우는 멱등 스크립트
+- `scripts/nightly-promote.sh` — 매일 00:00(KST) cron 이 돌리는 러너(git pull → precheck → deploy). `scripts/start-nightly-cron.sh` — 그 스케줄러(supercronic)를 띄우는 멱등 스크립트, `cron/crontab` — 그 스케줄(git 으로 관리)
 - `scripts/import-local-data.py` — `processed/`, `raw/` 파일을 Worker 로 올려요 (중복은 무시)
 
 ## 다시 배포하는 방법
@@ -113,16 +113,17 @@ API 로 현재 운영 배포 id 기록 → 개발·운영의 실제 올라가 �
 | 6 | 롤백 실패 또는 롤백 후에도 점검 실패 → **수동 확인 필요** |
 | 9 | 이미 다른 실행 중 |
 
-파일 위치(모두 repo 밖, 토큰은 절대 커밋하지 않음)
+파일 위치(토큰·로그는 repo 밖이고 토큰은 절대 커밋하지 않음)
 - API 토큰: `~/.config/usage-deploy/cf-token` (디렉터리 700, 파일 600). 권한: Workers Scripts Edit + Account Settings Read, 계정 `a12d19c6…`. 환경변수 `CLOUDFLARE_API_TOKEN` 이 있으면 그걸 먼저 씁니다. 값은 로그·출력에 나오지 않습니다.
-- crontab: `~/.config/usage-deploy/crontab` — `0 0 * * * /workspace/usage-dashboard/worker/scripts/nightly-promote.sh` (`TZ`/`CRON_TZ`=Asia/Seoul)
+- crontab: `worker/cron/crontab` (repo 안) — `0 0 * * * /workspace/usage-dashboard/worker/scripts/nightly-promote.sh` (`TZ`/`CRON_TZ`=Asia/Seoul). 고친 뒤엔 `--restart`. `~/.config/usage-deploy/crontab` 은 사람이 찾기 쉽게 둔 심볼릭 링크일 뿐이고 스크립트는 만들지도 쓰지도 않아요.
+- 러너는 커밋·푸시 전의 변경(스테이징 포함)이 있으면 배포하지 않아요(종료 1).
 - 로그: `~/.local/state/usage-deploy/YYYY-MM-DD.log`(60일 보관), 마지막 결과 `last-run.json`, 스케줄러 `supercronic.log`, `supercronic.pid`
 
 ```bash
 S=worker/scripts
 $S/start-nightly-cron.sh --status       # 이 crontab 으로 도는 supercronic 전부 (running pid=… / not running)
 $S/start-nightly-cron.sh                # 안 떠 있으면 시작 (멱등)
-$S/start-nightly-cron.sh --restart      # 재시작 (crontab 다시 생성)
+$S/start-nightly-cron.sh --restart      # 재시작 (repo 의 crontab 을 다시 읽음; 예전 ~/.config 경로로 도는 옛 프로세스도 정리)
 $S/start-nightly-cron.sh --stop         # 자동 배포 중지 (이 crontab 의 supercronic 전부)
 $S/nightly-promote.sh --dry-run         # 업로드·롤백만 빼고 전부 수행 (--force: 같아도 계획까지 출력)
 tail -n 40 ~/.local/state/usage-deploy/$(date +%F).log; cat ~/.local/state/usage-deploy/last-run.json

@@ -1,0 +1,4 @@
+# 매일 00:00 Asia/Seoul: 개발(usage-dashboard-dev) → 운영(usage-dashboard) 코드 배포
+CRON_TZ=Asia/Seoul
+TZ=Asia/Seoul
+0 0 * * * /workspace/usage-dashboard/worker/scripts/nightly-promote.sh
