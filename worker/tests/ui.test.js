@@ -644,9 +644,11 @@ test("한도 목록 메모 열은 내용 너비로 제한된다", () => {
   const memoRule = html.match(/\.lim-list td\.c-note[^\{]*\{([^}]*)\}/);
   assert.ok(memoRule, ".lim-list td.c-note 규칙을 찾지 못했어요");
   assert.ok(/width\s*:\s*1%/.test(memoRule[1]), `메모 열은 width:1% 로 내용 너비여야 해요: ${memoRule[1]}`);
-  assert.ok(/max-width\s*:\s*180px/.test(memoRule[1]), `메모 열은 max-width:180px 로 제한돼야 해요: ${memoRule[1]}`);
+  assert.ok(/max-width\s*:\s*200px/.test(memoRule[1]), `메모 열은 max-width:200px 로 제한돼야 해요: ${memoRule[1]}`);
+  assert.ok(/min-width\s*:\s*140px/.test(memoRule[1]), `메모 열은 글자 단위로 쪼개지지 않게 min-width:140px 이 필요해요: ${memoRule[1]}`);
   assert.ok(/white-space\s*:\s*normal/.test(memoRule[1]), "메모 열은 줄바꿈 가능해야 해요");
-  assert.ok(/overflow-wrap\s*:\s*anywhere/.test(memoRule[1]) || /word-break\s*:\s*keep-all/.test(memoRule[1]), "메모 열은 긴 단어가 줄바꿈 가능해야 해요");
+  assert.ok(/overflow-wrap\s*:\s*break-word/.test(memoRule[1]) && /word-break\s*:\s*keep-all/.test(memoRule[1]), "메모 열은 단어 단위로 줄바꿈해야 해요");
+  assert.ok(!/overflow-wrap\s*:\s*anywhere/.test(memoRule[1]), "overflow-wrap:anywhere 는 width:1% 와 만나 열을 글자 단위로 무너뜨려요");
   // 헤더도 같은 너비 규칙을 받아야 실제 표에서 좁아진다.
   assert.ok(/\.lim-list th:nth-child\(3\)/.test(html), "메모 헤더(.lim-list th:nth-child(3))에 너비 규칙이 있어야 해요");
   // 기록 표의 메모 열은 건드리지 않는다(260px 유지).
