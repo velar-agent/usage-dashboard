@@ -405,7 +405,10 @@ section:first-of-type { margin-top:0; }
 .status[data-s="stale"] { background:var(--warn-bg); border-color:transparent; color:var(--warn); }
 .status[data-s="error"], .status[data-s="stale"][data-late="2"] { background:var(--bad-bg); border-color:transparent; color:var(--bad); }
 .status:is([data-s="stale"], [data-s="error"]) .dot { background:currentColor; }
+.status .cnt { color:var(--muted); font-variant-numeric:tabular-nums; margin-left:var(--sp-1); }
 @keyframes pulse { 50% { opacity:.45; } }
+@keyframes valueFlash { 0% { background:var(--accent-soft); } 100% { background:transparent; } }
+.flash { animation:valueFlash 1.2s ease-out; border-radius:6px; }
 .icon-btn { width:36px; height:36px; display:grid; place-items:center; border:1px solid var(--line); background:var(--surface); border-radius:var(--r-sm); cursor:pointer; color:var(--ink-2); }
 .icon-btn:hover { border-color:var(--line-strong); color:var(--ink); }
 .icon-btn svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
@@ -493,7 +496,7 @@ section:first-of-type { margin-top:0; }
 @media (max-width:559px){
   .card { padding:var(--sp-3) var(--sp-4); gap:6px; }
   .big { font-size:28px; line-height:32px; }
-  .card-f .pacetxt { display:none; }                       /* 모바일: 기간 경과 문구 생략 */
+  .card-f .pacetxt { display:none; }                       /* 모바일: 진행률 문구 생략 */
   .card-f { justify-content:flex-end; }
 }
 
@@ -553,8 +556,8 @@ section:first-of-type { margin-top:0; }
 .lim-tb .seg button { height:34px; }
 .lim-list { max-height:none; margin-bottom:var(--sp-2); }
 .lim-list[hidden], #cards[hidden] { display:none; }
-.lim-list td.c-reset b { font-weight:700; margin-right:6px; }
-.lim-list td.c-reset span, .lim-list td.c-age { color:var(--muted); white-space:nowrap; }
+.lim-list td.c-reset b { font-weight:700; }
+.lim-list td.c-reset { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .lim-list .c-svc .chip { display:flex; width:max-content; margin-top:2px; }
 .lim-list td { white-space:nowrap; }
 .lim-list td.c-note { white-space:normal; }
@@ -694,7 +697,7 @@ td.c-time[data-dup] { color:var(--muted); }
       <span class="tz" title="모든 시각은 한국 표준시(UTC+9)">KST</span>
     </div>
     <div class="status" id="status" data-s="loading" role="status" aria-live="polite" aria-atomic="true" title="모든 시각은 한국 표준시(KST, UTC+9)">
-      <span class="dot" aria-hidden="true"></span><span id="statusLabel">불러오는 중…</span><span id="lastCollection" hidden></span>
+      <span class="dot" aria-hidden="true"></span><span id="statusLabel">불러오는 중…</span><span class="cnt" id="nextCollect" aria-live="off"></span>
     </div>
     <button class="icon-btn" id="btnRefresh" type="button" aria-label="지금 새로고침" title="지금 새로고침">
       <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/></svg></button>
@@ -727,7 +730,7 @@ td.c-time[data-dup] { color:var(--muted); }
     <div id="cards" class="cards"></div>
     <div class="table-wrap lim-list" id="limList" hidden role="region" aria-label="한도 목록" tabindex="0">
       <table>
-        <thead><tr><th scope="col">서비스</th><th scope="col">지표</th><th scope="col">메모</th><th scope="col">사용률</th><th scope="col">초기화</th><th scope="col">기간 경과</th><th scope="col">기록</th></tr></thead>
+        <thead><tr><th scope="col">서비스</th><th scope="col">지표</th><th scope="col">메모</th><th scope="col">사용률</th><th scope="col">초기화</th></tr></thead>
         <tbody id="limBody"></tbody>
       </table>
     </div>
@@ -735,7 +738,7 @@ td.c-time[data-dup] { color:var(--muted); }
 
   <section id="s-trends" aria-labelledby="h-trends">
     <div class="sec-h">
-      <div><h2 class="t-h2" id="h-trends">추이</h2><p class="sub">세로축 0–100% 고정 · 가로 점선은 60% / 85% 기준 · 음영은 미래 구간</p><p class="sub" id="trendStatus" role="status"></p></div>
+      <div><h2 class="t-h2" id="h-trends">추이</h2><p class="sub">세로축 0–100% 고정 · 가로 점선은 60% / 85% 기준</p><p class="sub" id="trendStatus" role="status"></p></div>
       <div class="seg" role="group" aria-label="기간">
         <button type="button" data-range="24h" aria-pressed="false">24시간</button>
         <button type="button" data-range="7d" aria-pressed="false">7일</button>
@@ -795,14 +798,19 @@ td.c-time[data-dup] { color:var(--muted); }
 <script>
 const KST = "Asia/Seoul";
 const THRESH = { warn: 60, bad: 85 };
-const COLLECT_MS = 5 * 60e3;       // 서비스별 수집 주기
-const AGE_OK = 2 * COLLECT_MS;     // 10분까지 정상, 다음 경고 기준까지는 수집 대기
-const AGE_WARN = 3 * COLLECT_MS;   // 3회 연속 누락(15분)부터 서비스·전체 수집 지연
-const AGE_BAD = 6 * COLLECT_MS;    // 6회 연속 누락(30분)부터 위험
-const REFRESH_MS = 30e3;           // 열린 탭에서 30초마다 새 수집 기록 확인
-const TICK_MS = 30e3;              // 요청이 지연돼도 상대 시간과 경고는 30초마다 갱신
+const COLLECT_MS = 5 * 60e3;       // 서비스별 수집 주기 (KST */5 슬롯)
+const AGE_OK = 2 * COLLECT_MS;     // 10분까지 정상, 그보다 오래면 수집 지연 경고
+const AGE_WARN = 3 * COLLECT_MS;   // 3회 연속 누락(15분)부터 주의 칩
+const AGE_BAD = 6 * COLLECT_MS;    // 6회 연속 누락(30분)부터 위험 칩
+const REFRESH_MS = 30e3;           // 구형 폴링 상수 (진행 표시줄 길이 기준 유지)
+const TICK_MS = 30e3;              // 지연 재평가 간격 (카운트다운은 1초 타이머가 표시)
 const COLLECT_HINT = `${COLLECT_MS / 60e3}분마다 수집`;
 const REFRESH_INTERVAL = `${REFRESH_MS / 1000}초`;
+const COUNTDOWN_MS = 1000;         // 카운트다운 초당 틱
+const COUNTDOWN_COLLECTING_MS = 30e3; // 슬롯 뒤 이만큼은 '수집 중…'
+const SLOT_LOAD_DELAY = 45e3;      // 슬롯 뒤 이만큼 지나서 새 기록을 받는다
+const SLOT_RETRY_MS = 15e3;        // 슬롯 뒤 새 기록이 없으면 이 간격으로 재시도
+const SLOT_RETRY_CAP = 2 * 60e3;   // 재시도 상한 (slot+45s 시도 뒤 2분, 그 뒤는 다음 슬롯까지 대기)
 const SVC_NAME = { grok:"Grok", codex:"Codex", claude:"Claude", gemini:"Gemini", antigravity:"Antigravity", muse:"Muse" };
 const METRIC_LABEL = { weekly_used_pct:"주간", session_used_pct:"세션(5시간)", weekly_scoped_used_pct:"주간·모델별", weekly_remaining_pct:"주간 남음", tokens_in:"입력 토큰", tokens_out:"출력 토큰", cost:"비용" };
 const WINDOW_MS = m => /session/.test(m || "") ? 5 * 3600e3 : /weekly/.test(m || "") ? 7 * 86400e3 : null;
@@ -877,6 +885,12 @@ function morphList(el, items) {
 const modes = {};   // 컨테이너별 현재 모드(skeleton | empty | data …) — 바뀔 때만 통째로 교체
 function setMode(id, mode) { if (modes[id] !== mode) { modes[id] = mode; $(id).innerHTML = ""; $(id).__h = null; return true; } return false; }
 function setHTML(el, html) { if (el.__h !== html) { el.__h = html; el.innerHTML = html; } }
+const prevVals = new Map();   // 시리즈별 지난 표시값 (바뀐 숫자만 잠깐 강조)
+function flashNumber(el) {
+  if (!el || el.classList.contains("flash")) return;
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 1200);
+}
 
 /* ---------- 상태 ---------- */
 let RECORDS = [];          // 최신순, 중복 제거
@@ -939,32 +953,74 @@ function urgency(a, b) {
 }
 const ageLevel = ms => ms >= AGE_BAD ? 2 : ms >= AGE_WARN ? 1 : 0;
 
+/* ---------- KST 5분 슬롯 카운트다운 (순수 함수로 떼어 둔다) ---------- */
+function nextSlotMs(now) {
+  // KST는 UTC+9 라 고정 오프셋으로 벽시계를 얻는다 (서머타임 없음).
+  const SLOT = COLLECT_MS, OFF = 9 * 3600e3;
+  const kst = now + OFF;
+  return Math.ceil(kst / SLOT) * SLOT - OFF;
+}
+function countdownText(now) {
+  const ms = nextSlotMs(now) - now;
+  const elapsed = ms <= 0 ? 0 : COLLECT_MS - ms;
+  if (elapsed < COUNTDOWN_COLLECTING_MS) return "수집 중…";
+  const s = Math.ceil(ms / 1000), m = Math.floor(s / 60);
+  return `다음 수집 ${m}:${p2(s % 60)}`;
+}
+function tickCountdown() {
+  // 1초 타이머는 이 텍스트 노드만 바꾼다 (전체 다시그리기 없음).
+  const el = $("nextCollect");
+  if (!el) return;
+  if (document.hidden) return;
+  if (fetchFailed) {
+    if (el.textContent !== "") el.textContent = "";
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const txt = countdownText(Date.now());
+  if (el.textContent !== txt) el.textContent = txt;
+}
+
 /* ---------- 헤더 상태 / 배너 ---------- */
 function renderCollection(now) {
   const services = Array.from(latestByService, ([service, ts]) => {
     const age = Math.max(0, now - ts);
-    return { service, age, level:ageLevel(age) };
+    return { service, age, level:ageLevel(age), delayed: age > AGE_OK };
   }).sort((a, b) => b.age - a.age);
   const oldest = services[0], latest = services.at(-1);
   let state, label;
   if (fetchFailed) { state = "error"; label = "갱신 실패"; }
   else if (!loaded) { state = "loading"; label = "불러오는 중…"; }
-  else if (oldest?.level) {
-    state = "stale"; label = latest.level ? "수집 지연" : "일부 수집 지연";
-    if (oldest.level === 2) label += " · 위험";
+  else if (services.some(s => s.delayed)) {
+    state = "stale";
+    const delayedList = services.filter(s => s.delayed);
+    if (delayedList.length > 2) {
+      label = `${delayedList.length}개 서비스 수집 지연 · 가장 오래 ${svcName(oldest.service)} ${Math.floor(oldest.age / 60e3)}분째`;
+    } else {
+      label = delayedList
+        .map(s => `${svcName(s.service)} ${Math.floor(s.age / 60e3)}분째 수집 없음`).join(" · ");
+      if (oldest.level === 2) label += " · 위험";
+    }
   } else if (skipped) { state = "error"; label = "기록 형식 오류"; }
   else if (!latest) { state = "waiting"; label = RECORDS.length ? "수집 시각 없음" : "첫 수집 대기"; }
-  else if (oldest.age > AGE_OK) { state = "waiting"; label = latest.age > AGE_OK ? "수집 대기" : "일부 수집 대기"; }
-  else { state = "ok"; label = "실시간"; }
+  else { state = "ok"; label = "실시간 수집 중"; }
 
-  const el = $("status"), statusLabel = $("statusLabel"), time = $("lastCollection");
+  const el = $("status"), statusLabel = $("statusLabel"), time = $("nextCollect");
   el.dataset.s = state;
   el.dataset.late = oldest?.level ?? 0;
   if (statusLabel.textContent !== label) statusLabel.textContent = label;
-  const ago = latest ? `· 마지막 수집 ${fmtAgo(latest.age)}` : "";
-  if (time.textContent !== ago) time.textContent = ago;
-  time.hidden = !latest;
-  renderBanner(services.filter(s => s.level), latest);
+  if (time) {
+    if (fetchFailed) {
+      if (time.textContent !== "") time.textContent = "";
+      time.hidden = true;
+    } else {
+      time.hidden = false;
+      const cnt = countdownText(now);
+      if (time.textContent !== cnt) time.textContent = cnt;
+    }
+  }
+  renderBanner(services.filter(s => s.delayed), latest);
 }
 const BANNER_ICON = { error:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></svg>',
   stale:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></svg>' };
@@ -974,11 +1030,11 @@ function renderBanner(delayed, latest) {
     const cached = lastOkAt ? `${fmtHM(lastOkAt)} 기준 마지막으로 받은 값을 보여 주고 있어요.` : "아직 받아 온 값이 없어요.";
     banners.push({ key:"fetch", html:`<div class="banner" data-kind="error" role="alert">
       ${BANNER_ICON.error}<div class="msg"><b>서버에 연결하지 못했어요.</b>
-        <span>${cached} ${REFRESH_INTERVAL} 뒤 자동으로 다시 시도합니다.</span></div>
+        <span>${cached} 수집 슬롯 기준으로 자동으로 다시 시도합니다.</span></div>
       <button class="btn" type="button" data-act="retry">지금 다시 시도</button></div>` });
   } else if (delayed.length) {
-    const level = delayed[0].level;
-    const head = latest.level ? `수집이 ${Math.floor(latest.age / 60e3)}분째 없어요 · 수집기가 멈췄을 수 있어요` : "일부 서비스 수집 지연";
+    const level = Math.max(...delayed.map(s => s.level), 1);
+    const head = latest?.delayed ? `수집이 ${Math.floor(latest.age / 60e3)}분째 없어요 · 수집기가 멈췄을 수 있어요` : "일부 서비스 수집 지연";
     const details = delayed.map(s => `${svcName(s.service)} ${Math.floor(s.age / 60e3)}분째`).join(" · ");
     const cadence = `${COLLECT_MS / 60e3}분 주기, ${AGE_WARN / COLLECT_MS}회 이상 누락`;
     banners.push({ key:"stale", html:`<div class="banner" data-kind="stale" data-late="${level}" role="status">
@@ -996,17 +1052,18 @@ function renderBanner(delayed, latest) {
 
 /* ---------- 요약 + 카드 ---------- */
 function recordAge(v) {
-  if (v.ts === null) return '<span class="age">기록 시각 없음</span>';
+  if (v.ts === null) return "";
+  if (v.age <= AGE_OK) return "";   // 정상 상태는 나이 문구 없이 실시간으로 보여준다
   const level = ageLevel(v.age);
-  const warning = level ? ` <span aria-hidden="true">⚠</span> ${level === 2 ? "위험" : "주의"}` : "";
-  return `<span class="age" data-late="${level}" title="${fmtFull(v.ts)}">기록 ${fmtAgo(v.age)}${warning}</span>`;
+  const warning = level === 2 ? ' <span aria-hidden="true">⚠</span> 위험' : ' <span aria-hidden="true">⚠</span> 주의';
+  return `<span class="age" data-late="${level || 1}" title="${fmtFull(v.ts)}">기록 ${fmtAgo(v.age)}${warning}</span>`;
 }
 function collectionBadge(service, now) {
   const ts = latestByService.get(service);
   if (ts === undefined) return "";
-  const level = ageLevel(now - ts);
-  if (!level) return "";
-  const severity = level === 2 ? "bad" : "warn";
+  const age = now - ts;
+  if (age <= AGE_OK) return "";
+  const severity = age >= AGE_BAD ? "bad" : "warn";
   return `<span class="chip" data-s="${severity}" title="서비스 마지막 수집 ${fmtFull(ts)}">${ICON[severity]}수집 지연</span>`;
 }
 const SKEL_KPI = Array.from({ length:3 }, () => `<div class="kpi"><div class="skel" style="height:12px;width:40%"></div><div class="skel" style="height:20px;width:70%;margin-top:8px"></div></div>`).join("");
@@ -1036,7 +1093,7 @@ function renderLimits(now = Date.now()) {
       <h3 class="t-h2">아직 기록이 없어요</h3>
       <p>토큰 사용 로깅 봇이 기록을 남기면 이 화면에 서비스별 사용률이 자동으로 나타나요.</p>
       <ol><li><div>로깅 봇이 <b>processed/YYYY-MM-DD.jsonl</b>에 한 줄씩 추가합니다 (날짜는 KST 기준).<code>${esc(EMPTY_JSON)}</code></div></li>
-      <li><div>이 화면이 ${REFRESH_INTERVAL}마다 자동으로 새로고침되어 카드·추이·표가 채워집니다.</div></li></ol>
+      <li><div>수집 슬롯 기준으로 자동으로 새로고침되어 카드·추이·표가 채워집니다.</div></li></ol>
       <button class="btn btn-primary" type="button" data-act="retry">지금 새로고침</button><p class="next">기록 형식은 FORMAT.md 에서 볼 수 있어요.</p></div>`);
     return;
   }
@@ -1077,35 +1134,49 @@ function renderLimits(now = Date.now()) {
   cardsEl.hidden = listMode; $("limList").hidden = !listMode;
   if (listMode) {
     setHTML($("limBody"), list.map(v => {
+      const r = v.r, n = v.n, st = v.st;
+      const reset = v.rs ? `<b>${esc(fmtDT(v.rs))}</b>` : `—`;
+      const txt = v.pct && Number.isFinite(n) ? fmtPct(n) + "%" : fmtVal(r);
+      const changed = prevVals.has(v.key) && prevVals.get(v.key) !== txt;
+      prevVals.set(v.key, txt);
+      const cls = changed ? "usage-value flash" : "usage-value";
+      const val = v.pct && Number.isFinite(n)
+        ? `<span class="usage"><span class="${cls}">${fmtPct(n)}%</span><span class="meter" aria-hidden="true"><span class="fill" style="width:${Math.max(0, Math.min(100, n))}%"></span></span></span>`
+        : v.pct ? "—" : esc(fmtVal(r));
+      return `<tr><td class="c-svc">${esc(svcName(r.service))}${collectionBadge(r.service, now)}</td><td>${esc(metricLabel(r.metric))}</td><td class="c-note">${esc(r.note || "")}</td><td class="c-val num" data-s="${st}">${val}</td><td class="c-reset" title="${v.rs ? esc(fmtFull(v.rs)) : ""}">${reset}</td></tr>`;
+    }).join(""));
+    setTimeout(() => $("limBody").querySelectorAll(".flash").forEach(el => el.classList.remove("flash")), 1200);
+  } else {
+    morphList(cardsEl, list.map(v => {
       const r = v.r, n = v.n, st = v.st, win = WINDOW_MS(r.metric);
       let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
-      const reset = v.expired ? `<b>초기화됨</b><span>새 값 대기 중</span>` : v.rs ? (v.rs > now ? `<b>${esc(fmtIn(v.rs - now))}</b><span>${esc(fmtDT(v.rs))}</span>` : `<b>${esc(fmtDT(v.rs))}</b>`) : `<span>—</span>`;
-      const val = v.pct && Number.isFinite(n)
-        ? `<span class="usage"><span class="usage-value">${fmtPct(n)}%</span><span class="meter" aria-hidden="true"><span class="fill" style="width:${Math.max(0, Math.min(100, n))}%"></span></span></span>`
-        : v.pct ? "—" : esc(fmtVal(r));
-      return `<tr><td class="c-svc">${esc(svcName(r.service))}${collectionBadge(r.service, now)}</td><td>${esc(metricLabel(r.metric))}</td><td class="c-note">${esc(r.note || "")}</td><td class="c-val num" data-s="${st}">${val}</td><td class="c-reset">${reset}</td><td>${pace !== null ? Math.round(pace) + "%" : "—"}</td><td class="c-age">${recordAge(v)}</td></tr>`;
-    }).join(""));
-  } else morphList(cardsEl, list.map(v => {
-    const r = v.r, n = v.n, st = v.st, win = WINDOW_MS(r.metric);
-    let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
-    let resetHtml;
-    if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
-    else if (v.rs && v.rs > now) resetHtml = `<b>${esc(fmtIn(v.rs - now))}</b>${esc(fmtDT(v.rs))} 초기화`;
-    else if (v.rs) resetHtml = `<b>${esc(fmtDT(v.rs))}</b>초기화`;
-    else resetHtml = `<b>—</b>초기화 시각 없음`;
-    const aria = v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트${v.expired ? ", 초기화됨, 새 값 대기 중" : ""}`
-                       : `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} ${fmtVal(r)}`;
-    const big = v.pct ? `${Number.isFinite(n) ? fmtPct(n) : "—"}<small>%</small>` : esc(fmtVal(r));
-    const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
-    const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span></div>` : "";
-    return { key:v.key, html:`<article class="card" data-s="${st}" aria-label="${esc(aria)}">
-      <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${collectionBadge(r.service, now)}${chip}</div>
-      <p class="kind">${esc(metricLabel(r.metric))}${r.note ? `<span class="note">${esc(r.note)}</span>` : ""}</p>
-      <div class="val-row"><span class="big num">${big}</span><span class="reset">${resetHtml}</span></div>
-      ${meter}
-      <div class="card-f"><span class="pacetxt">${pace !== null ? "기간 " + Math.round(pace) + "% 경과" : "&nbsp;"}</span>${recordAge(v)}</div>
-    </article>` };
-  }));
+      let resetHtml;
+      if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
+      else if (v.rs && v.rs > now) resetHtml = `<b>${esc(fmtIn(v.rs - now))}</b>${esc(fmtDT(v.rs))} 초기화`;
+      else if (v.rs) resetHtml = `<b>${esc(fmtDT(v.rs))}</b>초기화`;
+      else resetHtml = `<b>—</b>초기화 시각 없음`;
+      const aria = v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트${v.expired ? ", 초기화됨, 새 값 대기 중" : ""}`
+                         : `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} ${fmtVal(r)}`;
+      const big = v.pct ? `${Number.isFinite(n) ? fmtPct(n) : "—"}<small>%</small>` : esc(fmtVal(r));
+      const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
+      const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span></div>` : "";
+      return { key:v.key, html:`<article class="card" data-s="${st}" aria-label="${esc(aria)}">
+        <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${collectionBadge(r.service, now)}${chip}</div>
+        <p class="kind">${esc(metricLabel(r.metric))}${r.note ? `<span class="note">${esc(r.note)}</span>` : ""}</p>
+        <div class="val-row"><span class="big num">${big}</span><span class="reset">${resetHtml}</span></div>
+        ${meter}
+        <div class="card-f"><span class="pacetxt">${pace !== null ? "기간 " + Math.round(pace) + "% 경과" : "&nbsp;"}</span>${recordAge(v)}</div>
+      </article>` };
+    }));
+    // 바뀐 숫자만 잠깐 강조한다 (제자리 갱신 유지).
+    for (const card of cardsEl.children) {
+      const big = card.querySelector(".big");
+      if (!big) continue;
+      const key = card.dataset.key, txt = big.textContent;
+      if (prevVals.has(key) && prevVals.get(key) !== txt) flashNumber(big);
+      prevVals.set(key, txt);
+    }
+  }
 }
 
 /* ---------- 차트 (인라인 SVG, 고정 높이 비율) ---------- */
@@ -1133,6 +1204,15 @@ function effRange() {
   if (userRange) return userRange;
   const oldest = tms(RECORDS.at(-1)?.ts);
   return oldest !== null && Date.now() - oldest < 24 * 3600e3 ? "all" : "7d";
+}
+function chartWindow(range, now, earliestTs) {
+  // 모든 카드가 공유하는 시간 창. now가 정확히 중앙에 오도록 만든다 (순수 함수).
+  const DAY = 86400e3;
+  if (range === "24h") return { t0: now - DAY, t1: now + DAY };
+  if (range === "7d") return { t0: now - 7 * DAY, t1: now + 7 * DAY };
+  let t0 = Number.isFinite(earliestTs) ? earliestTs : now - DAY;
+  if (t0 >= now) t0 = now - 30 * 60e3;
+  return { t0, t1: now + (now - t0) };
 }
 function renderTrends() {
   const root = $("charts"), rng = effRange();
@@ -1162,6 +1242,13 @@ function renderTrends() {
     setHTML(root, `<div class="chart-empty" style="grid-column:1/-1;min-height:140px"><div><b style="color:var(--ink-2)">이 기간에 추이를 그릴 사용률 기록이 부족해요</b><br>같은 시리즈에 기록이 2건 이상 있으면 그래프가 나타납니다.</div></div>`);
     return;
   }
+  // 모든 카드가 같은 now·창을 공유한다 (카드별 따로 계산하지 않음).
+  const now = Date.now(), rngShown = displayedTrend.range;
+  let earliest = Infinity;
+  for (const arr of displayedTrend.series.values()) for (const s of arr) for (const r of s.rows) {
+    const t = tms(r.ts); if (t !== null && t < earliest) earliest = t;
+  }
+  const win = chartWindow(rngShown, now, earliest === Infinity ? null : earliest);
   setMode("charts", "data");
   const have = new Map([...root.children].map(c => [c.dataset.svc, c]));
   let prev = null;
@@ -1176,52 +1263,39 @@ function renderTrends() {
     const ser = displayedTrend.series.get(svc);
     morphList(card.querySelector("[data-legend]"), ser.map(s => ({ key:s.key,
       html:`<button class="lg" type="button" aria-pressed="${seriesVisible[s.key]}"><svg viewBox="0 0 20 8" aria-hidden="true"><line x1="1" y1="4" x2="19" y2="4" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/></svg>${esc(s.label)}</button>` })));
-    drawChart(card);
+    drawChart(card, now, win);
   }
   have.forEach(c => c.remove());
 }
-function drawChart(card) {
-  const plot = card.querySelector("[data-plot]"), ser = displayedTrend.series.get(card.dataset.svc) || [];
-  const W = Math.max(240, Math.round(plot.clientWidth || card.clientWidth - 34 || 320));
-  const H = Math.max(180, Math.min(260, Math.round(W * 0.42)));
+function buildChartSvg(opts) {
+  // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
+  const { vis, now, t0, t1, W, H } = opts;
   const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
-  const rng = displayedTrend.range, now = Date.now();
-  const vis = ser.filter(s => seriesVisible[s.key]);
   const futureResets = new Map();
   for (const s of vis) {
     const reset = tms(s.rows[s.rows.length - 1].reset_at);
-    if (reset > now) futureResets.set(s, reset);
+    if (reset !== null && reset > now) futureResets.set(s, reset);
   }
-  const maxEnd = now + 40 * DAY;
-  const t1 = Math.min(maxEnd, Math.max(now, ...futureResets.values()));
-  const clockStep = futureResets.size ? REFRESH_MS : 10 * MIN;
-  const endKey = t1 === now || t1 === maxEnd ? Math.floor(t1 / clockStep) : t1;
-  const sig = [W, H, rng, displayedTrend.version, Math.floor(now / clockStep), endKey,
-    ...vis.map(s => `${s.key}:${futureResets.get(s) ?? ""}`)].join("|");
-  if (plot.dataset.sig === sig) return;
-  plot.dataset.sig = sig; plot.style.height = H + "px";
-  const cur = card.querySelector("[data-cur]");
-  const emptyBox = msg => { plot.innerHTML = `<div class="chart-empty" style="height:${H}px"><div>${msg}</div></div>`; cur.textContent = ""; };
-  if (!vis.length) return emptyBox("표시할 항목을 위 범례에서 선택하세요.");
-  const t0 = rng === "24h" ? now - DAY : rng === "7d" ? now - 7 * DAY
-    : Math.min(now - 30 * MIN, ...vis.map(s => tms(s.rows[0].ts)));
   const inHistory = r => {
     const t = tms(r.ts);
     return t >= t0 && t <= now;
   };
   const inWin = vis.map(s => ({ s, rows:s.rows.filter(inHistory) })).filter(o => o.rows.length);
-  if (!inWin.length) return emptyBox("이 기간에는 기록이 없어요.<br><span class='t-cap'>기간을 ‘전체’로 바꿔 보세요.</span>");
   const m = { l:36, r:48, t:20, b:24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
   const span = t1 - t0;
   const X = t => m.l + (t - t0) / span * iw, Y = v => m.t + (1 - Math.max(0, Math.min(100, v)) / 100) * ih;
   const nowX = X(now), right = W - m.r;
-  let g = t1 > now ? `<rect x="${nowX}" y="${m.t}" width="${right - nowX}" height="${ih}" fill="var(--accent-soft)" opacity=".65"/>` : "";
+  let g = "";   // 미래 구간은 빈 여백으로 두어 음영·현재선 없이 둔다
   [0, 25, 50, 75, 100].forEach(v => { g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v}%</text>`; });
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.warn)}" y2="${Y(THRESH.warn)}" stroke="var(--warn)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.bad)}" y2="${Y(THRESH.bad)}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
-  g += `<line x1="${nowX}" x2="${nowX}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/><text x="${nowX}" y="${m.t - 5}" text-anchor="middle">지금</text>`;
+  let beyondIdx = 0;
   for (const [s, reset] of futureResets) {
-    if (reset > t1) continue;
+    if (reset > t1) {
+      const y = m.t + 10 + beyondIdx * 12; beyondIdx++;
+      g += `<text class="endlab" x="${right}" y="${y}" text-anchor="end" style="fill:${s.color}">만기 ${esc(fmtIn(reset - now))}</text>`;
+      continue;
+    }
     const x = X(reset);
     g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + 6}" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round"><title>${esc(s.label)} 초기화 · ${fmtDT(reset)}</title></line>`;
   }
@@ -1248,8 +1322,28 @@ function drawChart(card) {
     py = Math.min(Math.max(e.y, py + gap), m.t + ih - (ends.length - 1 - i) * gap);
     g += `<circle cx="${e.x}" cy="${e.y}" r="3.5" fill="${e.s.color}" stroke="var(--surface)" stroke-width="1.5"/><text class="endlab" x="${right + 8}" y="${py + 4}" style="fill:${e.s.color}">${fmtPct(e.v)}%</text>`;
   });
-  const label = `${svcName(card.dataset.svc)} 사용률 추이. ` + ends.map(e => `${e.s.label} 현재 ${fmtPct(e.v)}퍼센트`).join(", ")
-    + (t1 > now ? `. ${fmtDT(t1)}까지 음영은 미래 구간입니다.` : "");
+  return { inner: g, nowX, X, Y, m, iw, ih, span, inWin, ends };
+}
+function drawChart(card, now, win) {
+  // now·창은 renderTrends가 한 번 계산해서 넘긴다 (여기서 현재시각을 새로 구하지 않음).
+  const plot = card.querySelector("[data-plot]"), ser = displayedTrend.series.get(card.dataset.svc) || [];
+  const W = Math.max(240, Math.round(plot.clientWidth || card.clientWidth - 34 || 320));
+  const H = Math.max(180, Math.min(260, Math.round(W * 0.42)));
+  const HR = 3600e3;
+  const rng = displayedTrend.range;
+  const { t0, t1 } = win;
+  const vis = ser.filter(s => seriesVisible[s.key]);
+  const sig = [W, H, rng, displayedTrend.version, t0, t1,
+    ...vis.map(s => `${s.key}:${tms(s.rows[s.rows.length - 1].reset_at) ?? ""}`)].join("|");
+  if (plot.dataset.sig === sig) return;
+  plot.dataset.sig = sig; plot.style.height = H + "px";
+  const cur = card.querySelector("[data-cur]");
+  const emptyBox = msg => { plot.innerHTML = `<div class="chart-empty" style="height:${H}px"><div>${msg}</div></div>`; cur.textContent = ""; };
+  if (!vis.length) return emptyBox("표시할 항목을 위 범례에서 선택하세요.");
+  const built = buildChartSvg({ vis, now, t0, t1, W, H });
+  if (!built.inWin.length) return emptyBox("이 기간에는 기록이 없어요.<br><span class='t-cap'>기간을 ‘전체’로 바꿔 보세요.</span>");
+  const { inner: g, nowX, X, m, iw, ih, span, inWin, ends } = built;
+  const label = `${svcName(card.dataset.svc)} 사용률 추이. ` + ends.map(e => `${e.s.label} 현재 ${fmtPct(e.v)}퍼센트`).join(", ");
   plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}<line class="xh" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/><rect class="hit" x="${m.l}" y="${m.t}" width="${nowX - m.l}" height="${ih}" fill="transparent"/></svg><div class="tip" hidden></div>`;
   cur.textContent = "최고 " + fmtPct(Math.max(...ends.map(e => e.v))) + "%";
   const svg = plot.querySelector("svg"), tip = plot.querySelector(".tip"), xh = svg.querySelector(".xh");
@@ -1365,7 +1459,7 @@ async function loadRaw(force) {
     pre.scrollTop = top; pre.scrollLeft = left;
     pre.dataset.ver = ver; err.hidden = true;
     meta.textContent = `${fmtFull(Date.parse(d.mtime))} · ${Number(d.size).toLocaleString("ko-KR")}바이트${d.truncated ? " · 앞부분 64KB만 표시" : ""}`;
-  } catch (e) { if (my !== rawSeq) return; err.hidden = false; err.textContent = `원본 파일을 불러오지 못했어요. 목록은 ${REFRESH_INTERVAL} 뒤 다시 확인합니다.`; }
+  } catch (e) { if (my !== rawSeq) return; err.hidden = false; err.textContent = `원본 파일을 불러오지 못했어요. 수집 슬롯 기준으로 다시 확인합니다.`; }
 }
 
 /* ---------- 불러오기 ---------- */
@@ -1436,14 +1530,14 @@ function renderAll() {
   $("s-trends").hidden = empty; $("s-records").hidden = empty;
   if (!empty) { renderTrends(); renderTable(); }
   renderRawList();
-  const foot = [`${REFRESH_INTERVAL}마다 자동 새로고침`];
+  const foot = [`5분 수집 슬롯 기준 자동 새로고침`];
   if (loaded) foot.unshift(`기록 ${RECORDS.length.toLocaleString("ko-KR")}건`);
   if (skipped) foot.push(`형식이 잘못된 줄 ${skipped}개를 건너뛰었어요`);
   const html = foot.map(t => `<span>${esc(t)}</span>`).join("") + `<span><a href="/api/records">API</a></span>`;
   setHTML($("foot"), html);
 }
-function tick() {   // 30초마다 시간 표시만 갱신 (서버 요청 없음, DOM은 바뀐 부분만)
-  if (document.hidden || !loaded && !fetchFailed) return;
+function tick() {   // 30초마다 지연 여부만 다시 평가한다 (서버 요청 없음)
+  if (document.hidden) return;
   const now = Date.now();
   renderCollection(now);
   if (loaded && RECORDS.length) renderLimits(now);
@@ -1486,9 +1580,9 @@ $("btnMore").onclick = () => { shown += 50; renderTable(); };
 $("btnRefresh").onclick = () => load();
 $("charts").addEventListener("click", ev => {
   const b = ev.target.closest(".lg"); if (!b) return;
-  const card = b.closest(".chart-card"), key = b.dataset.key;
+  const key = b.dataset.key;
   seriesVisible[key] = !seriesVisible[key]; b.setAttribute("aria-pressed", String(seriesVisible[key]));
-  drawChart(card);
+  renderTrends();
 });
 document.addEventListener("click", ev => {
   const a = ev.target.closest("[data-act]");
@@ -1551,16 +1645,60 @@ $("rawLogout").addEventListener("click", async ev => {
 });
 let rt, lastW = 0;
 new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(() => { const w = $("main").clientWidth; if (w === lastW) return; lastW = w;
-  if (displayedTrend) document.querySelectorAll(".chart-card[data-svc]").forEach(drawChart); }, 80); }).observe($("main"));
+  if (displayedTrend) renderTrends(); }, 80); }).observe($("main"));
 document.addEventListener("visibilitychange", () => {
   document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
-  if (!document.hidden) { load(); }
+  if (!document.hidden) { load(); scheduleSlotLoad(); }
 });
 $("rbar").style.setProperty("--refresh-period", `${REFRESH_MS}ms`);
-setInterval(() => { if (!document.hidden) load(); }, REFRESH_MS);
+/* ---------- 슬롯 기반 자동 새로고침 (고정 폴링 없음) ---------- */
+let slotTimer = null, retryTimer = null, slotBaseline = null, slotRetrySince = 0;
+function latestTsNow() {
+  let m = -Infinity;
+  for (const ts of latestByService.values()) if (ts > m) m = ts;
+  return m;
+}
+function nextLoadMs(now) {
+  // 가장 최근 슬롯+45초가 아직 미래면 그때, 아니면 다음 슬롯+45초에 받는다.
+  const SLOT = COLLECT_MS, OFF = 9 * 3600e3;
+  const kst = now + OFF;
+  let at = Math.floor(kst / SLOT) * SLOT + SLOT_LOAD_DELAY - OFF;
+  if (at <= now) at += SLOT;
+  return at;
+}
+function scheduleSlotLoad() {
+  clearTimeout(slotTimer);
+  const now = Date.now();
+  slotTimer = setTimeout(onSlot, Math.max(0, nextLoadMs(now) - now));
+}
+async function onSlot() {
+  if (document.hidden) return;
+  clearTimeout(retryTimer);
+  slotBaseline = latestTsNow();
+  slotRetrySince = Date.now();
+  await load();
+  await slotMaybeRetry();
+  scheduleSlotLoad();
+}
+async function slotMaybeRetry() {
+  // 슬롯 뒤 새 기록이 없으면 15초 간격으로 재시도 (2분 상한).
+  if (document.hidden) return;
+  if (slotBaseline === null) return;
+  if (latestTsNow() > slotBaseline) { slotBaseline = null; return; }
+  if (Date.now() - slotRetrySince >= SLOT_RETRY_CAP) { slotBaseline = null; return; }
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(async () => {
+    if (document.hidden) return;
+    await load();
+    await slotMaybeRetry();
+  }, SLOT_RETRY_MS);
+}
+tickCountdown();
+setInterval(tickCountdown, COUNTDOWN_MS);
 setInterval(tick, TICK_MS);
 renderAll();
 load();
+scheduleSlotLoad();
 </script>
 </body>
 </html>
