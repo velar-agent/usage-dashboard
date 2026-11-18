@@ -825,7 +825,7 @@ function fillSeries(el, rows) {
   return sel;
 }
 const SORTS = ["urgent", "reset", "resetLate", "service"];
-let sortMode = SORTS.includes(LF.o) ? LF.o : "urgent", userRange = null, shown = 0;
+let sortMode = SORTS.includes(LF.o) ? LF.o : "urgent", userRange = ["24h", "7d", "all"].includes(LF.r) ? LF.r : null, shown = 0;   // 추이 기간: 고른 값은 새로고침해도 유지
 const seriesVisible = {};
 let SERIES = new Map();    // service -> [series]
 let dataVer = "";
@@ -1272,7 +1272,7 @@ document.addEventListener("keydown", ev => { if (ev.key === "Escape") document.q
 function syncSort() { document.querySelectorAll("[data-sort]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.sort === sortMode))); }
 syncSort(); syncView();
 document.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { sortMode = b.dataset.sort; LF.o = sortMode; saveLF(); syncSort(); renderLimits(); });
-document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { userRange = b.dataset.range; renderTrends(); });
+document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { userRange = LF.r = b.dataset.range; saveLF(); renderTrends(); });
 ["fService", "fMetric", "fQ"].forEach(id => $(id).addEventListener("input", () => { shown = pageSize(); renderTable(); }));
 $("btnMore").onclick = () => { shown += 50; renderTable(); };
 $("btnRefresh").onclick = () => load();
