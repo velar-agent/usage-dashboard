@@ -410,23 +410,20 @@ section:first-of-type { margin-top:0; }
 .reset { text-align:right; font-size:13px; line-height:18px; color:var(--ink-2); }
 .reset b { display:block; font-size:14px; line-height:20px; color:var(--ink); }
 
-.meter { position:relative; height:8px; background:var(--track); border-radius:var(--r-pill); overflow:visible; }
+.meter { position:relative; height:8px; background:var(--track); border-radius:var(--r-pill); }
 .meter .fill { position:absolute; inset:0 auto 0 0; border-radius:var(--r-pill); background:var(--ok); min-width:4px; }
 .card[data-s="warn"] .fill { background:var(--warn); } .card[data-s="bad"] .fill { background:var(--bad); }
 .card[data-s="na"] .fill { background:var(--muted); }
-.meter .pace { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--ink-2); border-radius:1px; opacity:.75; }
 .card-f { display:flex; justify-content:space-between; gap:var(--sp-2); color:var(--muted); font-size:12px; line-height:16px; }
 .card-f .age[data-late="1"] { color:var(--warn); font-weight:600; }
 .card-f .age[data-late="2"] { color:var(--bad); font-weight:600; }
 @media (max-width:559px){
   .card { padding:var(--sp-3) var(--sp-4); gap:6px; }
   .big { font-size:28px; line-height:32px; }
-  .card-f .pacetxt { display:none; }                       /* 모바일: 기간 경과 문구 생략(세로선은 유지) */
+  .card-f .pacetxt { display:none; }                       /* 모바일: 기간 경과 문구 생략 */
   .card-f { justify-content:flex-end; }
   .card-f:has(.age[data-late="0"]) { display:none; }       /* 기록이 신선하면 푸터 전체 생략, 오래되면 표시 */
 }
-.legend-note { margin-top:var(--sp-3); color:var(--muted); font-size:12px; line-height:16px; display:flex; flex-wrap:wrap; gap:4px var(--sp-4); }
-.legend-note i { display:inline-block; width:2px; height:10px; background:var(--ink-2); vertical-align:-1px; margin-right:4px; opacity:.75; }
 
 /* 스켈레톤 */
 .skel { background:linear-gradient(90deg,var(--track),var(--surface-2),var(--track)); background-size:200% 100%; animation:shimmer 1.4s linear infinite; border-radius:6px; }
@@ -651,12 +648,11 @@ td.c-time[data-dup] { color:var(--muted); }
         <tbody id="limBody"></tbody>
       </table>
     </div>
-    <p class="legend-note" id="legendNote"></p>
   </section>
 
   <section id="s-trends" aria-labelledby="h-trends">
     <div class="sec-h">
-      <div><h2 class="t-h2" id="h-trends">추이</h2><p class="sub">세로축 0–100% 고정 · 점선은 60% / 85% 기준</p></div>
+      <div><h2 class="t-h2" id="h-trends">추이</h2><p class="sub">세로축 0–100% 고정 · 가로 점선은 60% / 85% 기준 · 음영은 미래 구간</p></div>
       <div class="seg" role="group" aria-label="기간">
         <button type="button" data-range="24h" aria-pressed="false">24시간</button>
         <button type="button" data-range="7d" aria-pressed="false">7일</button>
@@ -828,7 +824,7 @@ const SORTS = ["urgent", "reset", "resetLate", "service"];
 let sortMode = SORTS.includes(LF.o) ? LF.o : "urgent", userRange = ["24h", "7d", "all"].includes(LF.r) ? LF.r : null, shown = 0;   // 추이 기간: 고른 값은 새로고침해도 유지
 const seriesVisible = {};
 let SERIES = new Map();    // service -> [series]
-let dataVer = "";
+let dataVer = 0;
 const pageSize = () => matchMedia("(max-width:719px)").matches ? 10 : 30;
 shown = pageSize();
 
@@ -890,9 +886,9 @@ const SKEL_KPI = Array.from({ length:3 }, () => `<div class="kpi"><div class="sk
 const SKEL_CARD = Array.from({ length:8 }, () => `<article class="card" aria-hidden="true"><div class="skel" style="height:18px;width:45%"></div><div class="skel" style="height:14px;width:60%"></div><div class="skel" style="height:36px;width:35%;margin-top:6px"></div><div class="skel" style="height:8px"></div><div class="skel" style="height:12px;width:55%"></div></article>`).join("");
 const EMPTY_JSON = '{"ts":"2026-11-15T15:20:00+09:00","service":"grok","metric":"weekly_used_pct","value":7,"unit":"%","reset_at":"2026-11-17T15:42:00+09:00","note":"X Premium+"}';
 function renderLimits() {
-  const cardsEl = $("cards"), kpis = $("kpis"), sub = $("limitsSub"), note = $("legendNote"), seg = $("sortSeg");
+  const cardsEl = $("cards"), kpis = $("kpis"), sub = $("limitsSub"), seg = $("sortSeg");
   if (!loaded) {
-    seg.hidden = true; sub.textContent = ""; note.innerHTML = "";
+    seg.hidden = true; sub.textContent = "";
     if (fetchFailed) {
       kpis.innerHTML = ""; modes.kpis = "none";
       if (setMode("cards", "failed")) cardsEl.className = "";
@@ -904,7 +900,7 @@ function renderLimits() {
     return;
   }
   if (!RECORDS.length) {
-    seg.hidden = true; sub.textContent = ""; note.innerHTML = ""; kpis.innerHTML = ""; modes.kpis = "none";
+    seg.hidden = true; sub.textContent = ""; kpis.innerHTML = ""; modes.kpis = "none";
     if (setMode("cards", "empty")) cardsEl.className = "";
     setHTML(cardsEl, `<div class="empty"><div class="ill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7"/><path d="M3 20h18"/></svg></div>
       <h3 class="t-h2">아직 기록이 없어요</h3>
@@ -924,7 +920,7 @@ function renderLimits() {
   const filtered = sel.length > 0;
   const list = all.filter(r => !filtered || sel.includes(serKey(r))).map(r => viewOf(r, now));
   if (!list.length) {
-    kpis.innerHTML = ""; modes.kpis = "none"; note.innerHTML = "";
+    kpis.innerHTML = ""; modes.kpis = "none";
     sub.textContent = "조건에 맞는 한도가 없어요";
     cardsEl.hidden = false; $("limList").hidden = true;
     if (setMode("cards", "nofilter")) cardsEl.className = "";
@@ -970,7 +966,7 @@ function renderLimits() {
                        : `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} ${fmtVal(r)}`;
     const big = v.pct ? `${Number.isFinite(n) ? fmtPct(n) : "—"}<small>%</small>` : esc(fmtVal(r));
     const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
-    const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span>${pace !== null ? `<i class="pace" style="left:calc(${pace.toFixed(1)}% - 1px)" title="기간 경과 ${Math.round(pace)}%"></i>` : ""}</div>` : "";
+    const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span></div>` : "";
     return { key:v.key, html:`<article class="card" data-s="${st}" aria-label="${esc(aria)}">
       <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${chip}</div>
       <p class="kind">${esc(metricLabel(r.metric))}${r.note ? `<span class="note">${esc(r.note)}</span>` : ""}</p>
@@ -979,7 +975,6 @@ function renderLimits() {
       <div class="card-f"><span class="pacetxt">${pace !== null ? "기간 " + Math.round(pace) + "% 경과" : "&nbsp;"}</span><span class="age" data-late="${lvl}" title="${esc(fmtFull(v.ts))}">${esc(fmtAgo(v.age))} 기록${lvl ? " ⚠" : ""}</span></div>
     </article>` };
   }));
-  setHTML(note, `<span><i></i>세로선: 한도 기간 중 현재까지 경과한 비율 (막대가 선보다 앞서면 빠르게 쓰는 중)</span>`);
 }
 
 /* ---------- 차트 (인라인 SVG, 고정 높이 비율) ---------- */
@@ -1041,32 +1036,53 @@ function drawChart(card) {
   const plot = card.querySelector("[data-plot]"), ser = SERIES.get(card.dataset.svc) || [];
   const W = Math.max(240, Math.round(plot.clientWidth || card.clientWidth - 34 || 320));
   const H = Math.max(180, Math.min(260, Math.round(W * 0.42)));
+  const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
   const rng = effRange(), now = Date.now();
   const vis = ser.filter(s => seriesVisible[s.key]);
-  const sig = [W, H, rng, vis.map(s => s.key + ":" + s.rows.length).join(","), ser.length, dataVer, Math.floor(now / 600e3)].join("|");
+  const futureResets = new Map();
+  for (const s of vis) {
+    const reset = tms(s.rows[s.rows.length - 1].reset_at);
+    if (reset > now) futureResets.set(s, reset);
+  }
+  const maxEnd = now + 40 * DAY;
+  const t1 = Math.min(maxEnd, Math.max(now, ...futureResets.values()));
+  const clockStep = futureResets.size ? REFRESH_MS : 10 * MIN;
+  const endKey = t1 === now || t1 === maxEnd ? Math.floor(t1 / clockStep) : t1;
+  const sig = [W, H, rng, dataVer, Math.floor(now / clockStep), endKey,
+    ...vis.map(s => `${s.key}:${futureResets.get(s) ?? ""}`)].join("|");
   if (plot.dataset.sig === sig) return;
   plot.dataset.sig = sig; plot.style.height = H + "px";
   const cur = card.querySelector("[data-cur]");
   const emptyBox = msg => { plot.innerHTML = `<div class="chart-empty" style="height:${H}px"><div>${msg}</div></div>`; cur.textContent = ""; };
   if (!vis.length) return emptyBox("표시할 항목을 위 범례에서 선택하세요.");
-  const allRows = vis.flatMap(s => s.rows);
-  const t1 = now;
-  const t0 = rng === "24h" ? t1 - 86400e3 : rng === "7d" ? t1 - 7 * 86400e3 : Math.min(t1 - 30 * 60e3, ...allRows.map(r => tms(r.ts)));
-  const inWin = vis.map(s => ({ s, rows:s.rows.filter(r => tms(r.ts) >= t0) })).filter(o => o.rows.length);
+  const t0 = rng === "24h" ? now - DAY : rng === "7d" ? now - 7 * DAY
+    : Math.min(now - 30 * MIN, ...vis.map(s => tms(s.rows[0].ts)));
+  const inHistory = r => {
+    const t = tms(r.ts);
+    return t >= t0 && t <= now;
+  };
+  const inWin = vis.map(s => ({ s, rows:s.rows.filter(inHistory) })).filter(o => o.rows.length);
   if (!inWin.length) return emptyBox("이 기간에는 기록이 없어요.<br><span class='t-cap'>기간을 ‘전체’로 바꿔 보세요.</span>");
-  const m = { l:36, r:48, t:10, b:24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const X = t => m.l + (t - t0) / (t1 - t0) * iw, Y = v => m.t + (1 - Math.max(0, Math.min(100, v)) / 100) * ih;
-  let g = "";
+  const m = { l:36, r:48, t:20, b:24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const span = t1 - t0;
+  const X = t => m.l + (t - t0) / span * iw, Y = v => m.t + (1 - Math.max(0, Math.min(100, v)) / 100) * ih;
+  const nowX = X(now), right = W - m.r;
+  let g = t1 > now ? `<rect x="${nowX}" y="${m.t}" width="${right - nowX}" height="${ih}" fill="var(--accent-soft)" opacity=".65"/>` : "";
   [0, 25, 50, 75, 100].forEach(v => { g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v}%</text>`; });
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.warn)}" y2="${Y(THRESH.warn)}" stroke="var(--warn)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.bad)}" y2="${Y(THRESH.bad)}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
-  const span = t1 - t0, maxTicks = Math.max(3, Math.floor(iw / 64));
-  const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
-  const cand = span <= 26 * HR ? [10 * MIN, 30 * MIN, HR, 3 * HR, 6 * HR, 12 * HR] : [DAY, 2 * DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY];
+  g += `<line x1="${nowX}" x2="${nowX}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/><text x="${nowX}" y="${m.t - 5}" text-anchor="middle">지금</text>`;
+  for (const [s, reset] of futureResets) {
+    if (reset > t1) continue;
+    const x = X(reset);
+    g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + 6}" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round"><title>${esc(s.label)} 초기화 · ${fmtDT(reset)}</title></line>`;
+  }
+  const maxTicks = Math.max(3, Math.floor(iw / 64));
+  const cand = [10 * MIN, 30 * MIN, HR, 3 * HR, 6 * HR, 12 * HR, DAY, 2 * DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY];
   const step = cand.find(c => span / c <= maxTicks) || cand[cand.length - 1];
   const off = 9 * HR; let tk = Math.ceil((t0 + off) / step) * step - off;
   for (; tk <= t1; tk += step) { const k = kp(tk), x = X(tk);
-    const lab = step < DAY ? (step < HR ? `${p2(k.h)}:${p2(k.mi)}` : `${p2(k.h)}:00`) : `${k.mo}/${k.d}`;
+    const lab = step >= DAY || (span > DAY && k.h === 0 && k.mi === 0) ? `${k.mo}/${k.d}` : `${p2(k.h)}:${p2(k.mi)}`;
     g += `<line x1="${x}" x2="${x}" y1="${m.t + ih}" y2="${m.t + ih + 4}" stroke="var(--line-strong)"/><text x="${x}" y="${H - 6}" text-anchor="middle">${lab}</text>`; }
   const ends = [];
   inWin.forEach(({ s, rows }) => {
@@ -1077,24 +1093,32 @@ function drawChart(card) {
     else g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/>`;
     const last = rows[rows.length - 1]; ends.push({ s, x:X(tms(last.ts)), y:Y(num(last.value)), v:num(last.value) });
   });
-  ends.sort((a, b) => a.y - b.y); let py = -99;
-  ends.forEach(e => { e.ly = Math.max(e.y, py + 13); py = e.ly; });
-  ends.forEach(e => { g += `<circle cx="${e.x}" cy="${e.y}" r="3.5" fill="${e.s.color}" stroke="var(--surface)" stroke-width="1.5"/><text class="endlab" x="${e.x + 8}" y="${e.ly + 4}" style="fill:${e.s.color}">${fmtPct(e.v)}%</text>`; });
-  const label = `${svcName(card.dataset.svc)} 사용률 추이. ` + ends.map(e => `${e.s.label} 현재 ${fmtPct(e.v)}퍼센트`).join(", ");
-  plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}<line class="xh" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/><rect class="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg><div class="tip" hidden></div>`;
+  ends.sort((a, b) => a.y - b.y);
+  const gap = Math.min(13, ih / Math.max(1, ends.length - 1));
+  let py = m.t - gap;
+  ends.forEach((e, i) => {
+    py = Math.min(Math.max(e.y, py + gap), m.t + ih - (ends.length - 1 - i) * gap);
+    g += `<circle cx="${e.x}" cy="${e.y}" r="3.5" fill="${e.s.color}" stroke="var(--surface)" stroke-width="1.5"/><text class="endlab" x="${right + 8}" y="${py + 4}" style="fill:${e.s.color}">${fmtPct(e.v)}%</text>`;
+  });
+  const label = `${svcName(card.dataset.svc)} 사용률 추이. ` + ends.map(e => `${e.s.label} 현재 ${fmtPct(e.v)}퍼센트`).join(", ")
+    + (t1 > now ? `. ${fmtDT(t1)}까지 음영은 미래 구간입니다.` : "");
+  plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${g}<line class="xh" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/><rect class="hit" x="${m.l}" y="${m.t}" width="${nowX - m.l}" height="${ih}" fill="transparent"/></svg><div class="tip" hidden></div>`;
   cur.textContent = "최고 " + fmtPct(Math.max(...ends.map(e => e.v))) + "%";
   const svg = plot.querySelector("svg"), tip = plot.querySelector(".tip"), xh = svg.querySelector(".xh");
   const hit = svg.querySelector(".hit");
+  const hideTip = () => { tip.hidden = true; xh.setAttribute("opacity", 0); };
   const move = ev => {
-    const bb = svg.getBoundingClientRect(), px = (ev.clientX - bb.left) * (W / bb.width), tt = t0 + (px - m.l) / iw * (t1 - t0);
+    const bb = svg.getBoundingClientRect(), px = (ev.clientX - bb.left) * (W / bb.width);
+    if (px < m.l || px > nowX) return hideTip();
+    const tt = t0 + (px - m.l) / iw * span;
     const rowsAt = inWin.map(({ s, rows }) => { let best = null, bd = 1e15; rows.forEach(r => { const dd = Math.abs(tms(r.ts) - tt); if (dd < bd) { bd = dd; best = r; } }); return bd < 3 * HR ? { s, r:best } : null; }).filter(Boolean);
-    if (!rowsAt.length) { tip.hidden = true; xh.setAttribute("opacity", 0); return; }
+    if (!rowsAt.length) return hideTip();
     const tx = X(tms(rowsAt[0].r.ts)); xh.setAttribute("x1", tx); xh.setAttribute("x2", tx); xh.setAttribute("opacity", .5);
     tip.hidden = false; tip.innerHTML = `<b>${esc(fmtDT(tms(rowsAt[0].r.ts)))}</b>` + rowsAt.map(o => `<div><span><i style="background:${o.s.color}"></i>${esc(o.s.label)}</span><span class="num">${fmtPct(num(o.r.value))}%</span></div>`).join("");
     const tw = tip.offsetWidth || 190; tip.style.left = Math.max(0, Math.min(W - tw, tx + 12)) + "px"; tip.style.top = "8px";
   };
   hit.addEventListener("pointermove", move);
-  hit.addEventListener("pointerleave", () => { tip.hidden = true; xh.setAttribute("opacity", 0); });
+  hit.addEventListener("pointerleave", hideTip);
 }
 
 /* ---------- 표 ---------- */
@@ -1207,11 +1231,20 @@ async function load() {
   loading = false;
   const rec = results[0];
   if (rec.status === "fulfilled") {
-    const seen = new Set(); RECORDS = [];
-    for (const r of rec.value.records || []) { const k = rowKey(r); if (!seen.has(k)) { seen.add(k); RECORDS.push(r); } }
+    const seen = new Set(), nextRecords = [];
+    let changed = false;
+    for (const r of rec.value.records || []) {
+      const k = rowKey(r);
+      if (seen.has(k)) continue;
+      const previous = RECORDS[nextRecords.length];
+      if (!changed && (!previous || previous.unit !== r.unit || rowKey(previous) !== k)) changed = true;
+      seen.add(k);
+      nextRecords.push(r);
+    }
+    if (changed || nextRecords.length !== RECORDS.length) dataVer++;
+    RECORDS = nextRecords;
     skipped = rec.value.skipped || 0; totalRecords = rec.value.total ?? RECORDS.length; serverLimit = rec.value.limit || 0;
     loaded = true; fetchFailed = false; lastOkAt = Date.now();
-    dataVer = RECORDS.length + "|" + (RECORDS[0] ? rowKey(RECORDS[0]) : "") + "|" + (RECORDS.length ? rowKey(RECORDS[RECORDS.length - 1]) : "");
     buildSeries();
     const bar = $("rbar"); bar.classList.remove("run"); void bar.offsetWidth; bar.classList.add("run");
   } else fetchFailed = true;
