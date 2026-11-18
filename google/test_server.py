@@ -15,7 +15,7 @@ import threading
 import time
 import unittest
 from contextlib import redirect_stderr
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -32,6 +32,9 @@ ENV = dict(INGEST_KEY="test-ingest", SESSION_SECRET="test-session", RAW_SALT=SAL
            RAW_HASH=RAW_HASH, RAW_ITERATIONS="10000", HOST="127.0.0.1", PORT="0")
 BEARER = {"Authorization": "Bearer " + ENV["INGEST_KEY"]}
 RECORD = dict(service="grok", metric="weekly_used_pct", value=14, ts="2026-11-15T06:20:00.789Z")
+KST = timezone(timedelta(hours=9))
+TREND_NOW = "2026-11-18T12:25:05+09:00"
+TREND_NOW_DT = datetime.fromisoformat(TREND_NOW)
 
 
 def cli(script, *args, env=None):
@@ -137,7 +140,7 @@ class HTTPTests(unittest.TestCase):
         empty, headers = self.api("GET", "/api/records", 200)
         self.assertEqual(headers["Access-Control-Allow-Origin"], "*")
         self.assert_kst(empty.pop("generated_at"))
-        self.assertEqual(empty, dict(records=[], count=0, total=0, limit=5000, skipped=0, timezone="Asia/Seoul"))
+        self.assertEqual(empty, dict(records=[], count=0, total=0, has_more=False, limit=5000, skipped=0, timezone="Asia/Seoul"))
         for auth in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": "Basic test-ingest"}):
             data, headers = self.post("/api/ingest", RECORD, 401, auth)
             self.assertEqual(headers["WWW-Authenticate"], 'Bearer realm="token-usage"')
@@ -158,8 +161,9 @@ class HTTPTests(unittest.TestCase):
         c = {**RECORD, "ts": "2026-11-16 24:00", "metric": "quota"}
         self.assertEqual(self.ingest([a, b, c])["inserted"], 3)
         expected = {**a, "service": "GroK", "unit": "%", "note": "한도", "source": "Bot", "reset_at": "2026-11-17"}
-        records = self.api("GET", "/api/records?since=2099-01-01", 200)[0]["records"]
+        records = self.api("GET", "/api/records", 200)[0]["records"]
         self.assertEqual(records, [c, expected, b])
+        self.assertEqual(self.api("GET", "/api/records?since=2099-01-01", 200)[0]["records"], [])
         with self.app.db.transaction() as db:
             row = db.execute("SELECT * FROM records ORDER BY id LIMIT 1").fetchone()
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
@@ -337,6 +341,158 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(sum(inserts), 1)
         self.assertCountEqual(failures, [401] * 5 + [429])
 
+    def test_trends_legacy_seven_days_restores_downsample(self):
+        # 7일치 20,160건에서 버킷 마지막·감소 양끝·양 끝 시각을 복원해요.
+        def kst_ms(ms):
+            return datetime.fromtimestamp(ms / 1000, tz=KST).isoformat(timespec="seconds")
+        with self.app.db.transaction(write=True) as db:
+            # 추이 색인이 없는 기존 DB처럼 놓고 시작 시점의 백필을 확인해요.
+            db.execute("DROP TRIGGER IF EXISTS records_index_trend")
+            db.execute("DROP VIEW IF EXISTS trend_neighbors")
+            db.execute("DROP TABLE IF EXISTS trend_points")
+            db.execute("DROP INDEX IF EXISTS idx_records_series_ts")
+            db.execute("DROP INDEX IF EXISTS idx_trend_rank_ts")
+        tick = 300000
+        slots = 7 * 24 * 12
+        now_ms = int(TREND_NOW_DT.timestamp() * 1000)
+        start = now_ms - 5000 - (slots - 1) * tick
+        expected = set()
+        last_in_bucket = {}
+        rows = []
+        for series in range(10):
+            for index in range(slots):
+                ts = start + index * tick
+                value = (index + series) % 83
+                seq = series * slots + index
+                ts_text = kst_ms(ts)
+                note = "plan-" + str(series)
+                data = json.dumps({"ts": ts_text, "service": "svc", "metric": "weekly_used_pct",
+                                   "note": note, "value": value, "seq": seq, "_private": True},
+                                  separators=(",", ":"))
+                rows.append((ts_text, "svc", "weekly_used_pct", note, float(value), data,
+                             note.lower(), "|".join((ts_text, "svc", "weekly_used_pct", note)), ts_text))
+                last_in_bucket[(series, ts // 1800000)] = seq
+                if index in (0, slots - 1):
+                    expected.add(seq)
+                if index > 0 and value == 0:
+                    expected.add(seq - 1)
+                    expected.add(seq)
+        with self.app.db.transaction(write=True) as db:
+            db.executemany(
+                "INSERT OR IGNORE INTO records (ts_kst, service, metric, note, value, data, search, dedupe_key, ingested_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
+        Database(self.app.db.path)
+        Database(self.app.db.path)  # 재적용해도 같은 결과예요.
+        with self.app.db.transaction() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM records").fetchone()[0], 20160)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM trend_points").fetchone()[0], 20160)
+        for seq in last_in_bucket.values():
+            expected.add(seq)
+        with patch("server.now_kst", return_value=TREND_NOW):
+            week = self.api("GET", "/api/trends?range=7d", 200)[0]
+            self.assertEqual(set(week), {"records", "range", "since", "bucket_minutes", "count", "limit",
+                                         "truncated", "generated_at", "timezone"})
+            self.assertEqual(week["bucket_minutes"], 30)
+            self.assertIs(week["truncated"], False)
+            self.assertEqual(week["count"], len(expected))
+            self.assertEqual(week["count"], len(week["records"]))
+            self.assertEqual(week["limit"], 20000)
+            self.assertLess(week["count"], 4000)
+            self.assertEqual({row["seq"] for row in week["records"]}, expected)
+            self.assertTrue(all("_private" not in row for row in week["records"]))
+            self.assertTrue(all(week["records"][i - 1]["ts"] >= row["ts"]
+                                for i, row in enumerate(week["records"]) if i))
+            self.assertEqual(week["generated_at"], TREND_NOW)
+            self.assertEqual(week["timezone"], "Asia/Seoul")
+            self.assertEqual(self.api("GET", "/api/trends?range=24h", 200)[0]["count"], 2880)
+            self.assertEqual(self.api("GET", "/api/trends?range=all", 200)[0]["bucket_minutes"], 60)
+            # 같은 URL은 20초 캐시로 같은 결과를 돌려주고 새 행은 캐시가 만료된 뒤에만 보여요.
+            extra = (kst_ms(now_ms - 1000), "svc", "weekly_used_pct", "plan-99", 1.0,
+                     json.dumps({"ts": kst_ms(now_ms - 1000), "service": "svc", "metric": "weekly_used_pct",
+                                 "note": "plan-99", "value": 1, "seq": 99999}, separators=(",", ":")),
+                     "plan-99", "|".join((kst_ms(now_ms - 1000), "svc", "weekly_used_pct", "plan-99")),
+                     kst_ms(now_ms - 1000))
+            with self.app.db.transaction(write=True) as db:
+                db.execute(
+                    "INSERT OR IGNORE INTO records (ts_kst, service, metric, note, value, data, search, dedupe_key, ingested_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    extra,
+                )
+            cached = self.api("GET", "/api/trends?range=7d", 200)[0]
+            self.assertEqual(cached["count"], week["count"])
+            self.assertNotIn(99999, {row["seq"] for row in cached["records"]})
+            fresh = self.api("GET", "/api/trends?range=7d&v=2", 200)[0]
+            self.assertEqual(fresh["count"], week["count"] + 1)
+            self.assertIn(99999, {row["seq"] for row in fresh["records"]})
+
+    def test_trends_late_duplicate_future_and_records_params(self):
+        def at(offset_seconds, value, note="active"):
+            text = (TREND_NOW_DT + timedelta(seconds=offset_seconds)).isoformat(timespec="seconds")
+            return dict(ts=text, service="svc", metric="weekly_used_pct", value=value, note=note)
+        points = [at(-1, 82), at(-4, 80), at(-3, 2), at(-2, 45), at(60, 95), at(-70 * 86400, 7, "paused")]
+        self.assertEqual(self.ingest(points), dict(ok=True, received=6, inserted=6, duplicates=0))
+        self.assertEqual(self.ingest(points), dict(ok=True, received=6, inserted=0, duplicates=6))
+        with patch("server.now_kst", return_value=TREND_NOW):
+            trends = self.api("GET", "/api/trends?range=all", 200)[0]
+            self.assertEqual(trends["bucket_minutes"], 360)
+            self.assertEqual([row["value"] for row in trends["records"]], [82, 2, 80, 7])
+            self.assertIsNone(trends["since"])
+            recent = self.api("GET", "/api/records?latest=1&total=0&limit=1", 200)[0]
+            self.assertEqual([recent["total"], recent["count"], recent["has_more"]], [None, 1, True])
+            self.assertEqual([row["note"] for row in recent["latest"]], ["active", "paused"])
+            legacy = self.api("GET", "/api/records?limit=1", 200)[0]
+            self.assertEqual(legacy["total"], 6)
+            self.assertNotIn("latest", legacy)
+            since_text = (TREND_NOW_DT - timedelta(seconds=3)).isoformat(timespec="seconds")
+            filtered = self.api("GET", "/api/records?latest=1&" + urlencode({"since": since_text}), 200)[0]
+            self.assertEqual(filtered["count"], 4)
+            self.assertEqual([row["note"] for row in filtered["latest"]], ["active"])
+            for path in ("/api/trends?range=", "/api/trends?range=oops", "/api/records?since=?"):
+                data, headers = self.api("GET", path, 400)
+                self.assertEqual(headers["Access-Control-Allow-Origin"], "*")
+                self.assertIsInstance(data["error"], str)
+
+    def test_trends_limit_keeps_old_series_latest(self):
+        # 상한에서 오래된 시리즈 최신을 보존하고 실제 초과 여부를 구분해요.
+        def kst(dt):
+            return dt.isoformat(timespec="seconds")
+        def insert(db, when, series, value, seq):
+            note = "plan-" + str(series)
+            data = json.dumps({"ts": when, "service": "svc", "metric": "weekly_used_pct",
+                               "note": note, "value": value, "seq": seq}, separators=(",", ":"))
+            db.execute(
+                "INSERT INTO records (ts_kst, service, metric, note, value, data, search, dedupe_key, ingested_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (when, "svc", "weekly_used_pct", note, float(value), data,
+                 note.lower(), "|".join((when, "svc", "weekly_used_pct", note)), when),
+            )
+        with self.app.db.transaction(write=True) as db:
+            insert(db, kst(TREND_NOW_DT - timedelta(days=1)), 1, 9, -1)
+            batch = []
+            for index in range(1, 20000):
+                when = kst(TREND_NOW_DT - timedelta(seconds=index))
+                note = "plan-0"
+                data = json.dumps({"ts": when, "service": "svc", "metric": "weekly_used_pct",
+                                   "note": note, "value": index % 2, "seq": index}, separators=(",", ":"))
+                batch.append((when, "svc", "weekly_used_pct", note, float(index % 2), data,
+                              note.lower(), "|".join((when, "svc", "weekly_used_pct", note)), when))
+            db.executemany(
+                "INSERT INTO records (ts_kst, service, metric, note, value, data, search, dedupe_key, ingested_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                batch,
+            )
+        with patch("server.now_kst", return_value=TREND_NOW):
+            self.assertIs(self.api("GET", "/api/trends?range=24h", 200)[0]["truncated"], False)
+        with self.app.db.transaction(write=True) as db:
+            insert(db, TREND_NOW, 0, 0, 0)
+        with patch("server.now_kst", return_value=TREND_NOW):
+            page = self.api("GET", "/api/trends?range=24h&v=2", 200)[0]
+            self.assertEqual([page["count"], page["limit"], page["truncated"]], [20000, 20000, True])
+            self.assertEqual(page["records"][0]["seq"], 0)
+            self.assertEqual(page["records"][-1]["seq"], -1)
+
 
 class ToolTests(unittest.TestCase):
     def test_startup_requires_both_secrets_and_html(self):
@@ -375,6 +531,9 @@ class ToolTests(unittest.TestCase):
             with Database(dbfile).transaction() as db:
                 self.assertEqual([dict(r) for r in db.execute("SELECT * FROM records")], [row])
                 self.assertEqual([dict(r) for r in db.execute("SELECT * FROM raw_files")], [raw])
+                # ON CONFLICT DO NOTHING인 가져오기에도 트리거로 추이 색인이 생겨요.
+                self.assertEqual([dict(r) for r in db.execute("SELECT * FROM trend_points")],
+                                 [dict(id=71, ts_kst=row["ts_kst"], sample_rank=7)])
                 self.assertEqual(server.public_record(row), {"value": 3.5, "ts": row["ts_kst"]})
 
     def test_generate_permissions_refusal_rotation_and_no_secrets_in_output(self):

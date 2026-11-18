@@ -40,7 +40,7 @@ journalctl -u cloudflared-usage-dashboard-google-dev -n 50 --no-pager
 ## HTTP 동작
 
 - 수집·업로드 형식은 [기록 전송 안내](../docs/INGEST.md)를 따르고 요청 주소만 이 서버로 바꿔요. 수집은 한 번에 최대 40건, 본문은 256 KiB, 정규화한 기록 하나는 4096바이트예요.
-- `/api/records`는 `service`, `metric`, `q`, `limit`를 읽고 `since`는 무시해요. Worker의 20초 엣지 캐시를 프로세스 안에 두므로 같은 URL에는 최대 20초 전 결과가 보일 수 있어요. 브라우저 응답은 `Cache-Control: no-store`예요.
+- `/api/records`는 `service`, `metric`, `q`, `limit`에 `since`(ISO 8601를 `ts_kst >=`로 바꿔 걸어요), `latest=1`(시리즈별 최신), `total=0`(총수 생략)도 읽어요. `since`가 ISO 8601이 아니면 400을 돌려줘요. `/api/trends?range=24h|7d|all`(기본 7d)은 버킷 마지막·초기화 양끝·시작/최신만 남겨 최대 2만 건까지 돌려주고 잘못된 `range`는 400으로 돌려줘요. Worker의 20초 엣지 캐시를 프로세스 안에 두므로 같은 URL에는 최대 20초 전 결과가 보일 수 있어요. 브라우저 응답은 `Cache-Control: no-store`예요.
 - 원본 세션은 12시간 동안 유효해요. Worker와 같이 HTTP와 HTTPS 모두 쿠키에 `Secure; HttpOnly; SameSite=Strict`를 붙여요. 브라우저에서 원본을 열 때는 터널의 HTTPS 주소를 사용하세요.
 - 로그인 제한은 IP당 60초에 비밀번호 실패 5회예요. IP는 `CF-Connecting-IP`, `X-Forwarded-For`의 첫 값, TCP 접속 주소 순서로 골라 해시로 저장해요. 서버가 전달 헤더를 신뢰하므로 외부 요청은 이 헤더를 설정하는 프록시를 통해 받으세요.
 

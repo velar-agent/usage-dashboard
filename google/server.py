@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -34,6 +35,9 @@ MAX_RAW_FILES = 8
 MAX_RAW_BYTES = 64 * 1024
 MAX_RAW_UPLOAD_CHARS = 200 * 1024
 MAX_RECORDS_DEFAULT = 5000
+MAX_TREND_POINTS = 20000
+TREND_MINUTES = (0, 30, 60, 180, 360)  # schema.sql의 sample_rank 순서. 0은 원본.
+LATEST_RANK = 7
 MAX_INGEST_RECORDS = 40
 MAX_INGEST_BODY = 256 * 1024
 RAW_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}")
@@ -194,13 +198,14 @@ class RecordsCache:
 
 
 class APIError(Exception):
-    def __init__(self, status, message, *, headers=None, details=None):
+    def __init__(self, status, message, *, headers=None, details=None, cors=False):
         super().__init__(message)
         self.status = status
         self.payload = {"error": message}
         if details is not None:
             self.payload["details"] = details
         self.headers = headers
+        self.cors = cors
 
 
 def accepts_gzip(header):
@@ -362,10 +367,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def records(self, query):
         scheme = self.headers.get("X-Forwarded-Proto", "http").split(",")[0].strip().lower()
-        key = (scheme, self.headers.get("Host", "").lower(), query, "?" in self.path)
+        key = ("/api/records", scheme, self.headers.get("Host", "").lower(), query, "?" in self.path)
         body = self.server.cache.get(key)
         if body is None:
             body = self.query_records(parse_qs(query, keep_blank_values=True))
+            self.server.cache.put(key, body)
+        self.send_body(200, body, "application/json; charset=utf-8", cors=True)
+
+    def trends(self, query):
+        scheme = self.headers.get("X-Forwarded-Proto", "http").split(",")[0].strip().lower()
+        key = ("/api/trends", scheme, self.headers.get("Host", "").lower(), query, "?" in self.path)
+        body = self.server.cache.get(key)
+        if body is None:
+            body = self.query_trends(parse_qs(query, keep_blank_values=True))
             self.server.cache.put(key, body)
         self.send_body(200, body, "application/json; charset=utf-8", cors=True)
 
@@ -373,33 +387,126 @@ class Handler(BaseHTTPRequestHandler):
         service = query.get("service", [""])[0].strip(JS_SPACE)
         metric = query.get("metric", [""])[0].strip(JS_SPACE)
         q = query.get("q", [""])[0].strip(JS_SPACE).lower()
+        include_latest = query.get("latest", [""])[0] == "1"
+        include_total = query.get("total", [""])[0] != "0"
+        if "since" in query:
+            since = parse_ts(query["since"][0])
+            if since is None:
+                raise APIError(400, "`since`는 ISO 8601 시각이어야 해요.", cors=True)
+        else:
+            since = None
         raw_limit = query.get("limit", [""])[0].strip(JS_SPACE)
         limit = MAX_RECORDS_DEFAULT
         if re.fullmatch(r"[+-]?[0-9]+", raw_limit):
             limit = int(max(1, min(float(raw_limit), 20000)))
         conditions, args = [], []
-        for condition, value in (("service = ?", service), ("metric = ?", metric), ("instr(search, ?) > 0", q)):
+        for condition, value in (("r.service = ?", service), ("r.metric = ?", metric), ("instr(r.search, ?) > 0", q)):
             if value:
                 conditions.append(condition)
                 args.append(value)
+        if since is not None:
+            conditions.append("r.ts_kst >= ?")
+            args.append(since)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         # 최대 2만 건을 읽어도 파싱한 객체는 한 건씩만 메모리에 둬요.
         body = io.BytesIO()
         body.write(b'{"records":[')
-        count = 0
+        count = fetched = 0
         with self.server.db.transaction() as db:
+            total = db.execute("SELECT COUNT(*) FROM records r" + where, args).fetchone()[0] if include_total else None
+            for row in db.execute(
+                "SELECT r.data, r.ts_kst FROM records r" + where + " ORDER BY r.ts_kst DESC, r.id ASC LIMIT ?",
+                (*args, limit + (0 if include_total else 1)),
+            ):
+                fetched += 1
+                if count < limit:
+                    if count:
+                        body.write(b",")
+                    body.write(json_bytes(public_record(row)))
+                    count += 1
+            has_more = (total if total is not None else fetched) > limit
+            # latest는 같은 where로 각 시리즈의 최신 한 건만 가져와요.
+            body.write(b"],")
+            body.write(json_bytes(dict(count=count, total=total, has_more=has_more))[1:-1])
+            if include_latest:
+                body.write(b',"latest":[')
+                latest_count = 0
+                for row in db.execute(
+                    "SELECT r.data, r.ts_kst FROM trend_points p JOIN records r"
+                    " ON r.id = p.id AND p.sample_rank = ?" + where + " ORDER BY p.ts_kst DESC, p.id ASC",
+                    (LATEST_RANK, *args),
+                ):
+                    if latest_count:
+                        body.write(b",")
+                    body.write(json_bytes(public_record(row)))
+                    latest_count += 1
+                body.write(b"]")
+            body.write(b"," + json_bytes(dict(limit=limit, skipped=0, generated_at=now_kst(), timezone="Asia/Seoul"))[1:])
+        return body.getvalue()
+
+    def query_trends(self, query):
+        period = query.get("range", ["7d"])[0]
+        if period not in ("24h", "7d", "all"):
+            raise APIError(400, "`range`는 24h, 7d, all 중 하나여야 해요.", cors=True)
+        end = now_kst()
+        if period == "all":
+            since = None
+            minutes = None
+        else:
+            since = (datetime.fromisoformat(end) - timedelta(days=1 if period == "24h" else 7)).isoformat(timespec="seconds")
+            minutes = 0 if period == "24h" else 30
+        with self.server.db.transaction() as db:
+            if period == "all":
+                row = db.execute(
+                    "SELECT (SELECT ts_kst FROM records WHERE ts_kst <= ? ORDER BY ts_kst LIMIT 1) AS oldest,"
+                    " (SELECT ts_kst FROM records WHERE ts_kst <= ? ORDER BY ts_kst DESC LIMIT 1) AS newest",
+                    (end, end),
+                ).fetchone()
+                if row["oldest"] is None:
+                    days = 0
+                else:
+                    days = db.execute("SELECT (unixepoch(?) - unixepoch(?)) / 86400.0",
+                                      (row["newest"], row["oldest"])).fetchone()[0] or 0
+                minutes = 60 if days <= 14 else 180 if days <= 60 else 360
+            # 등급별로 시간 인덱스를 탐색해요. 상한에서는 최신·시작·초기화 양끝·큰 버킷 순으로 보존해요.
+            min_rank = TREND_MINUTES.index(minutes)
+            ranks = list(range(min_rank, LATEST_RANK + 1))
+            marks = ",".join("?" for _ in ranks)
+            since_arg = since or ""
             rows = db.execute(
-                "SELECT data, ts_kst FROM records" + where + " ORDER BY ts_kst DESC, id ASC LIMIT ?",
-                (*args, limit),
-            )
-            for row in rows:
-                if count:
-                    body.write(b",")
-                body.write(json_bytes(public_record(row)))
-                count += 1
-            total = db.execute("SELECT COUNT(*) FROM records" + where, args).fetchone()[0]
+                "WITH as_of(id) AS MATERIALIZED (\n"
+                "  -- 미래 시각의 기록이 있는 시리즈도 조회 종료 시각까지의 마지막 값은 포함해요.\n"
+                "  SELECT (SELECT id FROM records WHERE service = f.service AND metric = f.metric\n"
+                "    AND COALESCE(note, '') = COALESCE(f.note, '') AND ts_kst BETWEEN ? AND ?\n"
+                "    ORDER BY ts_kst DESC LIMIT 1)\n"
+                "  FROM trend_points t JOIN records f ON f.id = t.id WHERE t.sample_rank = ? AND t.ts_kst > ?\n"
+                "), picks AS (\n"
+                "  SELECT id, ts_kst, sample_rank FROM trend_points\n"
+                f"  WHERE sample_rank IN ({marks}) AND ts_kst BETWEEN ? AND ?\n"
+                "    AND id NOT IN (SELECT id FROM as_of WHERE id IS NOT NULL)\n"
+                "  UNION ALL\n"
+                "  SELECT r.id, r.ts_kst, ? AS sample_rank FROM as_of a JOIN records r ON r.id = a.id\n"
+                "  ORDER BY sample_rank DESC, ts_kst DESC, id LIMIT ?\n"
+                ")\n"
+                "SELECT r.id, r.ts_kst, r.data FROM picks p JOIN records r ON r.id = p.id\n"
+                "ORDER BY p.sample_rank DESC, p.ts_kst DESC, p.id",
+                (since_arg, end, LATEST_RANK, end, *ranks, since_arg, end, LATEST_RANK, MAX_TREND_POINTS + 1),
+            ).fetchall()
+        truncated = len(rows) > MAX_TREND_POINTS
+        if truncated:
+            rows.pop()
+        rows.sort(key=lambda row: row["id"])
+        rows.sort(key=lambda row: row["ts_kst"], reverse=True)
+        # 최대 2만 건을 읽어도 파싱한 객체는 한 건씩만 메모리에 둬요.
+        body = io.BytesIO()
+        body.write(b'{"records":[')
+        for index, row in enumerate(rows):
+            if index:
+                body.write(b",")
+            body.write(json_bytes(public_record(row)))
         body.write(b"],")
-        meta = dict(count=count, total=total, limit=limit, skipped=0, generated_at=now_kst(), timezone="Asia/Seoul")
+        meta = dict(range=period, since=since, bucket_minutes=minutes, count=len(rows),
+                    limit=MAX_TREND_POINTS, truncated=truncated, generated_at=end, timezone="Asia/Seoul")
         body.write(json_bytes(meta)[1:])
         return body.getvalue()
 
@@ -495,6 +602,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, dict(ok=True, time=now_kst()), cors=True)
             if path == "/api/records":
                 return self.records(query)
+            if path == "/api/trends":
+                return self.trends(query)
             if path == "/api/raw":
                 return self.raw_list()
             if path == "/api/raw/file":
@@ -516,7 +625,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.route()
         except APIError as exc:
-            self.send_json(exc.status, exc.payload, headers=exc.headers)
+            self.send_json(exc.status, exc.payload, headers=exc.headers, cors=exc.cors)
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             self.close_connection = True
         except Exception as exc:
