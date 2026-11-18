@@ -329,40 +329,42 @@ section:first-of-type { margin-top:0; }
 .brand h1 { white-space:nowrap; }
 .tz { color:var(--muted); font-size:12px; line-height:16px; border:1px solid var(--line-strong); padding:1px 6px; border-radius:var(--r-pill); white-space:nowrap; }
 .refresh-bar { height:2px; background:transparent; position:relative; overflow:hidden; }
-.refresh-bar i { position:absolute; inset:0 auto 0 0; width:100%; background:var(--accent); opacity:.55; transform-origin:left; animation:tick 60s linear infinite; }
+.refresh-bar i { position:absolute; inset:0 auto 0 0; width:100%; background:var(--accent); opacity:.55; transform-origin:left; transform:scaleX(0); }
 @keyframes tick { from { transform:scaleX(0); } to { transform:scaleX(1); } }
 
 .status { display:inline-flex; align-items:center; gap:var(--sp-2); height:32px; padding:0 var(--sp-3); border-radius:var(--r-pill);
   background:var(--surface); border:1px solid var(--line); font-size:13px; white-space:nowrap; }
-.status .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none; }
-.status[data-s="loading"] .dot { background:var(--muted); animation:pulse 1.2s ease-in-out infinite; }
+.status .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex:none; }
+.status[data-s="ok"] .dot { background:var(--ok); animation:pulse 2s ease-in-out infinite; }
 .status[data-s="stale"] { background:var(--warn-bg); border-color:transparent; color:var(--warn); }
-.status[data-s="stale"] .dot { background:var(--warn); }
-.status[data-s="error"] { background:var(--bad-bg); border-color:transparent; color:var(--bad); }
-.status[data-s="error"] .dot { background:var(--bad); }
-.status .short { display:none; }
-@keyframes pulse { 50% { opacity:.3; } }
+.status[data-s="error"], .status[data-s="stale"][data-late="2"] { background:var(--bad-bg); border-color:transparent; color:var(--bad); }
+.status:is([data-s="stale"], [data-s="error"]) .dot { background:currentColor; }
+@keyframes pulse { 50% { opacity:.45; } }
 .icon-btn { width:36px; height:36px; display:grid; place-items:center; border:1px solid var(--line); background:var(--surface); border-radius:var(--r-sm); cursor:pointer; color:var(--ink-2); }
 .icon-btn:hover { border-color:var(--line-strong); color:var(--ink); }
 .icon-btn svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 @media (max-width:639px){
-  .topbar .wrap { height:52px; gap:var(--sp-2); }
-  .status .full { display:none; } .status .short { display:inline; }
+  .topbar .wrap { height:auto; display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:2px var(--sp-2); padding-block:var(--sp-1) var(--sp-2); }
+  .status { grid-column:1 / -1; grid-row:2; justify-self:start; min-height:26px; height:auto; max-width:100%; white-space:normal; }
   .icon-btn { width:44px; height:44px; }
   .tz { display:none; }
 }
 
 /* 배너 */
 .banner { display:flex; gap:var(--sp-3); align-items:flex-start; padding:var(--sp-3) var(--sp-4); border-radius:var(--r-md); margin-bottom:var(--sp-4); font-size:14px; }
-.banner[data-kind="error"] { background:var(--bad-bg); color:var(--bad); }
 .banner[data-kind="stale"] { background:var(--warn-bg); color:var(--warn); }
+.banner[data-kind="error"], .banner[data-late="2"] { background:var(--bad-bg); color:var(--bad); }
 .banner b { font-weight:700; }
-.banner .msg { flex:1; }
+.banner .msg { flex:1; min-width:0; word-break:keep-all; overflow-wrap:anywhere; }
 .banner .msg span { display:block; color:var(--ink-2); font-size:13px; }
 .btn { min-height:36px; padding:0 var(--sp-4); border-radius:var(--r-sm); border:1px solid var(--line-strong); background:var(--surface); cursor:pointer; font-weight:600; font-size:13px; }
 .btn:hover { border-color:var(--ink-2); }
 .btn-primary { background:var(--accent); color:var(--on-accent); border-color:transparent; }
-@media (max-width:639px){ .btn { min-height:44px; } }
+@media (max-width:639px){
+  .btn { min-height:44px; }
+  .banner { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--sp-2); }
+  .banner .btn { grid-column:2; justify-self:start; }
+}
 
 /* =========================================================
    4. 요약(KPI) + 한도 카드
@@ -382,6 +384,10 @@ section:first-of-type { margin-top:0; }
 .seg button { border:0; background:transparent; height:30px; padding:0 var(--sp-3); border-radius:6px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; }
 .seg button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent); }
 @media (max-width:639px){ .seg button { height:40px; } }
+@media (max-width:419px){
+  #sortSeg { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; }
+  #sortSeg button { white-space:nowrap; }
+}
 
 .cards { display:grid; grid-template-columns:1fr; gap:var(--sp-3); }
 @media (min-width:560px){ .cards { grid-template-columns:repeat(2,1fr); gap:var(--sp-4); } }
@@ -392,8 +398,8 @@ section:first-of-type { margin-top:0; }
   padding:var(--sp-4); display:flex; flex-direction:column; gap:var(--sp-2); min-width:0; }
 .card[data-s="warn"] { border-color:color-mix(in srgb, var(--warn) 45%, var(--line)); }
 .card[data-s="bad"]  { border-color:color-mix(in srgb, var(--bad) 55%, var(--line)); background:color-mix(in srgb, var(--bad-bg) 35%, var(--surface)); }
-.card-h { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2); }
-.card .svc { font-size:15px; line-height:22px; font-weight:700; letter-spacing:-0.01em; }
+.card-h { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--sp-2); }
+.card .svc { font-size:15px; line-height:22px; font-weight:700; letter-spacing:-0.01em; overflow-wrap:anywhere; }
 .chip { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 8px; border-radius:var(--r-pill); font-size:12px; font-weight:700; line-height:16px; white-space:nowrap; }
 .chip svg { width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
 .chip[data-s="ok"]   { background:var(--ok-bg);   color:var(--ok); }
@@ -416,14 +422,13 @@ section:first-of-type { margin-top:0; }
 .card[data-s="bad"] .fill, .lim-list td[data-s="bad"] .fill { background:var(--bad); }
 .card[data-s="na"] .fill, .lim-list td[data-s="na"] .fill { background:var(--muted); }
 .card-f { display:flex; justify-content:space-between; gap:var(--sp-2); color:var(--muted); font-size:12px; line-height:16px; }
-.card-f .age[data-late="1"] { color:var(--warn); font-weight:600; }
-.card-f .age[data-late="2"] { color:var(--bad); font-weight:600; }
+.age[data-late="1"] { color:var(--warn); font-weight:600; }
+.age[data-late="2"] { color:var(--bad); font-weight:600; }
 @media (max-width:559px){
   .card { padding:var(--sp-3) var(--sp-4); gap:6px; }
   .big { font-size:28px; line-height:32px; }
   .card-f .pacetxt { display:none; }                       /* 모바일: 기간 경과 문구 생략 */
   .card-f { justify-content:flex-end; }
-  .card-f:has(.age[data-late="0"]) { display:none; }       /* 기록이 신선하면 푸터 전체 생략, 오래되면 표시 */
 }
 
 /* 스켈레톤 */
@@ -484,7 +489,7 @@ section:first-of-type { margin-top:0; }
 .lim-list[hidden], #cards[hidden] { display:none; }
 .lim-list td.c-reset b { font-weight:700; margin-right:6px; }
 .lim-list td.c-reset span, .lim-list td.c-age { color:var(--muted); white-space:nowrap; }
-.lim-list td.c-age[data-late="1"], .lim-list td.c-age[data-late="2"] { color:var(--warn); }
+.lim-list .c-svc .chip { display:flex; width:max-content; margin-top:2px; }
 .lim-list td { white-space:nowrap; }
 .lim-list td.c-note { white-space:normal; }
 .lim-list td.c-val { width:25%; }
@@ -526,12 +531,12 @@ a.raw-link { color:var(--accent); font-size:12px; margin-left:6px; text-decorati
   .table-wrap { max-height:none; overflow:visible; background:transparent; border:0; box-shadow:none; }
   thead { display:none; }
   table,tbody { display:block; }
-  tbody tr { display:grid; grid-template-columns:1fr auto; column-gap:var(--sp-3); row-gap:2px; padding:var(--sp-3) var(--sp-4);
+  tbody tr { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:var(--sp-3); row-gap:2px; padding:var(--sp-3) var(--sp-4);
     background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); margin-bottom:var(--sp-2); }
   td { display:block; padding:0; border:0; }
   tbody tr:hover td { background:transparent; }
-  td.c-svc { grid-column:1; grid-row:1; font-size:15px; }
-  td.c-kind { grid-column:1; grid-row:2; color:var(--muted); }
+  td.c-svc { grid-column:1; grid-row:1; font-size:15px; white-space:normal; overflow-wrap:anywhere; }
+  td.c-kind { grid-column:1; grid-row:2; color:var(--muted); overflow-wrap:anywhere; }
   td.c-val { grid-column:2; grid-row:1 / span 2; align-self:center; font-size:22px; line-height:28px; text-align:right; }
   td.c-val .mini { display:none; }
   td.c-time { grid-column:1 / -1; grid-row:3; font-size:12px; color:var(--muted); margin-top:4px; }
@@ -587,8 +592,7 @@ footer.foot { margin-top:var(--sp-6); color:var(--muted); font-size:12px; line-h
 @media (prefers-reduced-motion: reduce){ *,*::before,*::after { animation:none !important; transition:none !important; } }
 
 /* ---- 서버 연동 보강 ---- */
-.refresh-bar i.run { animation:tick 60s linear 1 forwards; }
-.refresh-bar i { animation:none; transform:scaleX(0); }
+.refresh-bar i.run { animation:tick var(--refresh-period) linear 1 forwards; }
 .refresh-bar { display:none; }   /* 상단 진행 표시줄 움직임 끔 */
 html[data-hidden="1"] .refresh-bar i { animation-play-state:paused; }
 .err-box { background:var(--surface); border:1px dashed var(--line-strong); border-radius:var(--r-lg); padding:var(--sp-6) var(--sp-4); text-align:center; color:var(--ink-2); display:grid; gap:var(--sp-3); justify-items:center; }
@@ -623,7 +627,9 @@ td.c-time[data-dup] { color:var(--muted); }
       <h1 class="t-h1">토큰 사용량</h1>
       <span class="tz" title="모든 시각은 한국 표준시(UTC+9)">KST</span>
     </div>
-    <div class="status" id="status" data-s="loading" role="status" aria-live="polite" title="모든 시각은 한국 표준시(KST, UTC+9)"><span class="dot"></span><span class="full">불러오는 중…</span><span class="short">로딩</span></div>
+    <div class="status" id="status" data-s="loading" role="status" aria-live="polite" aria-atomic="true" title="모든 시각은 한국 표준시(KST, UTC+9)">
+      <span class="dot" aria-hidden="true"></span><span id="statusLabel">불러오는 중…</span><span id="lastCollection" hidden></span>
+    </div>
     <button class="icon-btn" id="btnRefresh" type="button" aria-label="지금 새로고침" title="지금 새로고침">
       <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/></svg></button>
     <button class="icon-btn" id="btnTheme" type="button" aria-label="테마: 자동" title="테마: 자동 (눌러서 변경)"></button>
@@ -718,14 +724,19 @@ td.c-time[data-dup] { color:var(--muted); }
     </details>
   </section>
 
-  <footer class="foot" id="foot"><span>60초마다 자동 새로고침</span><span><a href="/api/records">API</a></span></footer>
+  <footer class="foot" id="foot"><span><a href="/api/records">API</a></span></footer>
 </main>
 <script>
 const KST = "Asia/Seoul";
 const THRESH = { warn: 60, bad: 85 };
-const STALE_MS = 60 * 60e3;                 // 헤더 "기록 오래됨" 기준
-const AGE_WARN = 60 * 60e3, AGE_BAD = 6 * 3600e3;   // 카드별 기록 나이
-const REFRESH_MS = 60e3, TICK_MS = 30e3;
+const COLLECT_MS = 5 * 60e3;       // 서비스별 수집 주기
+const AGE_OK = 2 * COLLECT_MS;     // 10분까지 정상, 다음 경고 기준까지는 수집 대기
+const AGE_WARN = 3 * COLLECT_MS;   // 3회 연속 누락(15분)부터 서비스·전체 수집 지연
+const AGE_BAD = 6 * COLLECT_MS;    // 6회 연속 누락(30분)부터 위험
+const REFRESH_MS = 30e3;           // 열린 탭에서 30초마다 새 수집 기록 확인
+const TICK_MS = 30e3;              // 요청이 지연돼도 상대 시간과 경고는 30초마다 갱신
+const COLLECT_HINT = `${COLLECT_MS / 60e3}분마다 수집`;
+const REFRESH_INTERVAL = `${REFRESH_MS / 1000}초`;
 const SVC_NAME = { grok:"Grok", codex:"Codex", claude:"Claude", gemini:"Gemini", antigravity:"Antigravity", muse:"Muse" };
 const METRIC_LABEL = { weekly_used_pct:"주간", session_used_pct:"세션(5시간)", weekly_scoped_used_pct:"주간·모델별", weekly_remaining_pct:"주간 남음", tokens_in:"입력 토큰", tokens_out:"출력 토큰", cost:"비용" };
 const WINDOW_MS = m => /session/.test(m || "") ? 5 * 3600e3 : /weekly/.test(m || "") ? 7 * 86400e3 : null;
@@ -751,7 +762,7 @@ function fmtIn(ms) {
   return m >= 1 ? `${m}분 후` : "곧";
 }
 function fmtAgo(ms) {
-  const m = Math.round(ms / 60e3);
+  const m = Math.floor(ms / 60e3);
   if (m < 1) return "방금"; if (m < 60) return `${m}분 전`;
   const h = Math.floor(m / 60); return h < 24 ? `${h}시간 ${m % 60 ? (m % 60) + "분 " : ""}전` : `${Math.floor(h / 24)}일 전`;
 }
@@ -803,6 +814,7 @@ function setHTML(el, html) { if (el.__h !== html) { el.__h = html; el.innerHTML 
 
 /* ---------- 상태 ---------- */
 let RECORDS = [];          // 최신순, 중복 제거
+let latestByService = new Map();   // 한도 필터와 무관한 서비스별 마지막 기록 시각
 let RAW_LIST = [], rawListOk = true, rawLoaded = false, rawAuthed = false, rawLocked = false, pendingRaw = "";
 let loaded = false, fetchFailed = false, lastOkAt = null, skipped = 0, totalRecords = 0, serverLimit = 0;
 const LF = (() => { try { return JSON.parse(localStorage.getItem("limFilter") || "{}") || {}; } catch (e) { return {}; } })();
@@ -846,10 +858,10 @@ function latestSeries() {
   return [...m.values()];
 }
 function viewOf(r, now) {
-  const n = num(r.value), pct = isPctRec(r), ts = tms(r.ts) ?? now, rs = tms(r.reset_at);
+  const n = num(r.value), pct = isPctRec(r), ts = tms(r.ts), rs = tms(r.reset_at);
   const expired = false;  // 2026-11-16 사용자 요청: 초기화 시각이 지나도 '초기화됨' 판단 없이 마지막 값을 그대로 보여준다
   const st = expired || !pct ? "na" : statusOf(n);
-  return { r, n, pct, ts, rs, expired, st, age: Math.max(0, now - ts), key: serKey(r) };
+  return { r, n, pct, ts, rs, expired, st, age: ts === null ? null : Math.max(0, now - ts), key: serKey(r) };
 }
 const RANK = { bad:3, warn:2, ok:1, na:0 };
 function urgency(a, b) {
@@ -861,45 +873,85 @@ function urgency(a, b) {
 const ageLevel = ms => ms >= AGE_BAD ? 2 : ms >= AGE_WARN ? 1 : 0;
 
 /* ---------- 헤더 상태 / 배너 ---------- */
-function latestTs() { return RECORDS.length ? tms(RECORDS[0].ts) : null; }
-function renderStatus() {
-  const el = $("status"), now = Date.now(), last = latestTs();
-  let s, full, short;
-  if (!loaded && !fetchFailed) { s = "loading"; full = "불러오는 중…"; short = "로딩"; }
-  else if (fetchFailed) { s = "error"; full = lastOkAt ? `갱신 실패 · 마지막 성공 ${fmtHM(lastOkAt)}` : "갱신 실패"; short = "실패"; }
-  else if (last !== null && now - last >= STALE_MS) { s = "stale"; full = `기록 오래됨 · ${fmtAgo(now - last)} 기록`; short = "오래됨"; }
-  else { s = "ok"; full = `정상 · ${fmtHM(lastOkAt)} 갱신`; short = fmtHM(lastOkAt); }
-  const html = `<span class="dot"></span><span class="full">${esc(full)}</span><span class="short">${esc(short)}</span>`;
-  if (el.dataset.s !== s) el.dataset.s = s;
-  setHTML(el, html);
+function renderCollection(now) {
+  const services = Array.from(latestByService, ([service, ts]) => {
+    const age = Math.max(0, now - ts);
+    return { service, age, level:ageLevel(age) };
+  }).sort((a, b) => b.age - a.age);
+  const oldest = services[0], latest = services.at(-1);
+  let state, label;
+  if (fetchFailed) { state = "error"; label = "갱신 실패"; }
+  else if (!loaded) { state = "loading"; label = "불러오는 중…"; }
+  else if (oldest?.level) {
+    state = "stale"; label = latest.level ? "수집 지연" : "일부 수집 지연";
+    if (oldest.level === 2) label += " · 위험";
+  } else if (skipped) { state = "error"; label = "기록 형식 오류"; }
+  else if (!latest) { state = "waiting"; label = RECORDS.length ? "수집 시각 없음" : "첫 수집 대기"; }
+  else if (oldest.age > AGE_OK) { state = "waiting"; label = latest.age > AGE_OK ? "수집 대기" : "일부 수집 대기"; }
+  else { state = "ok"; label = "실시간"; }
+
+  const el = $("status"), statusLabel = $("statusLabel"), time = $("lastCollection");
+  el.dataset.s = state;
+  el.dataset.late = oldest?.level ?? 0;
+  if (statusLabel.textContent !== label) statusLabel.textContent = label;
+  const ago = latest ? `· 마지막 수집 ${fmtAgo(latest.age)}` : "";
+  if (time.textContent !== ago) time.textContent = ago;
+  time.hidden = !latest;
+  renderBanner(services.filter(s => s.level), latest);
 }
 const BANNER_ICON = { error:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></svg>',
   stale:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></svg>' };
-function renderBanner() {
-  const now = Date.now(), last = latestTs(), box = $("banner");
-  let key = "", html = "";
+function renderBanner(delayed, latest) {
+  const banners = [];
   if (fetchFailed) {
-    key = "error";
-    const t = lastOkAt ? `${fmtHM(lastOkAt)} 기준 마지막으로 받은 값을 보여 주고 있어요.` : "아직 받아 온 값이 없어요.";
-    html = `<div class="banner" data-kind="error" role="alert">${BANNER_ICON.error}<div class="msg"><b>서버에 연결하지 못했어요.</b><span>${t} 60초 뒤 자동으로 다시 시도합니다.</span></div><button class="btn" type="button" data-act="retry">지금 다시 시도</button></div>`;
-  } else if (loaded && last !== null && now - last >= STALE_MS) {
-    key = "stale";
-    const h = Math.floor((now - last) / 3600e3);
-    const head = h >= 1 ? `${h}시간 넘게 새 기록이 없어요.` : "새 기록이 한동안 없어요.";
-    html = `<div class="banner" data-kind="stale" role="status">${BANNER_ICON.stale}<div class="msg"><b>${head}</b><span>로깅 봇이 멈췄을 수 있어요. 아래 값은 ${fmtDT(last)} 기준이라 실제와 다를 수 있습니다.</span></div></div>`;
+    const cached = lastOkAt ? `${fmtHM(lastOkAt)} 기준 마지막으로 받은 값을 보여 주고 있어요.` : "아직 받아 온 값이 없어요.";
+    banners.push({ key:"fetch", html:`<div class="banner" data-kind="error" role="alert">
+      ${BANNER_ICON.error}<div class="msg"><b>서버에 연결하지 못했어요.</b>
+        <span>${cached} ${REFRESH_INTERVAL} 뒤 자동으로 다시 시도합니다.</span></div>
+      <button class="btn" type="button" data-act="retry">지금 다시 시도</button></div>` });
+  } else if (delayed.length) {
+    const level = delayed[0].level;
+    const head = latest.level ? `수집이 ${Math.floor(latest.age / 60e3)}분째 없어요 · 수집기가 멈췄을 수 있어요` : "일부 서비스 수집 지연";
+    const details = delayed.map(s => `${svcName(s.service)} ${Math.floor(s.age / 60e3)}분째`).join(" · ");
+    const cadence = `${COLLECT_MS / 60e3}분 주기, ${AGE_WARN / COLLECT_MS}회 이상 누락`;
+    banners.push({ key:"stale", html:`<div class="banner" data-kind="stale" data-late="${level}" role="status">
+      ${level === 2 ? BANNER_ICON.error : BANNER_ICON.stale}
+      <div class="msg"><b>${head}</b><span>${esc(details)} (${cadence})</span></div></div>` });
   }
-  if (box.dataset.k !== key) { box.dataset.k = key; box.innerHTML = html; }
-  else if (key) { const nu = htmlToEl(html), cur = box.firstElementChild; if (cur) morph(cur, nu); }
+  // skipped는 파일을 읽을 때 건너뛴 줄 수로, 서비스나 발생 시각 정보가 없다.
+  if (skipped) {
+    banners.push({ key:"format", html:`<div class="banner" data-kind="error" role="alert">
+      ${BANNER_ICON.error}<div class="msg"><b>기록 형식 오류</b>
+        <span>전체 기록에서 형식이 잘못된 줄 ${esc(skipped)}개를 건너뛰었어요.</span></div></div>` });
+  }
+  morphList($("banner"), banners);
 }
 
 /* ---------- 요약 + 카드 ---------- */
+function recordAge(v) {
+  if (v.ts === null) return '<span class="age">기록 시각 없음</span>';
+  const level = ageLevel(v.age);
+  const warning = level ? ` <span aria-hidden="true">⚠</span> ${level === 2 ? "위험" : "주의"}` : "";
+  return `<span class="age" data-late="${level}" title="${fmtFull(v.ts)}">기록 ${fmtAgo(v.age)}${warning}</span>`;
+}
+function collectionBadge(service, now) {
+  const ts = latestByService.get(service);
+  if (ts === undefined) return "";
+  const level = ageLevel(now - ts);
+  if (!level) return "";
+  const severity = level === 2 ? "bad" : "warn";
+  return `<span class="chip" data-s="${severity}" title="서비스 마지막 수집 ${fmtFull(ts)}">${ICON[severity]}수집 지연</span>`;
+}
 const SKEL_KPI = Array.from({ length:3 }, () => `<div class="kpi"><div class="skel" style="height:12px;width:40%"></div><div class="skel" style="height:20px;width:70%;margin-top:8px"></div></div>`).join("");
 const SKEL_CARD = Array.from({ length:8 }, () => `<article class="card" aria-hidden="true"><div class="skel" style="height:18px;width:45%"></div><div class="skel" style="height:14px;width:60%"></div><div class="skel" style="height:36px;width:35%;margin-top:6px"></div><div class="skel" style="height:8px"></div><div class="skel" style="height:12px;width:55%"></div></article>`).join("");
 const EMPTY_JSON = '{"ts":"2026-11-15T15:20:00+09:00","service":"grok","metric":"weekly_used_pct","value":7,"unit":"%","reset_at":"2026-11-17T15:42:00+09:00","note":"X Premium+"}';
-function renderLimits() {
+function renderLimits(now = Date.now()) {
   const cardsEl = $("cards"), kpis = $("kpis"), sub = $("limitsSub"), seg = $("sortSeg");
+  if (!loaded || !RECORDS.length) {
+    seg.hidden = true; sub.textContent = COLLECT_HINT;
+    $("limToolbar").hidden = true; $("limList").hidden = true; cardsEl.hidden = false;
+  }
   if (!loaded) {
-    seg.hidden = true; sub.textContent = "";
     if (fetchFailed) {
       kpis.innerHTML = ""; modes.kpis = "none";
       if (setMode("cards", "failed")) cardsEl.className = "";
@@ -911,20 +963,19 @@ function renderLimits() {
     return;
   }
   if (!RECORDS.length) {
-    seg.hidden = true; sub.textContent = ""; kpis.innerHTML = ""; modes.kpis = "none";
+    kpis.innerHTML = ""; modes.kpis = "none";
     if (setMode("cards", "empty")) cardsEl.className = "";
     setHTML(cardsEl, `<div class="empty"><div class="ill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7"/><path d="M3 20h18"/></svg></div>
       <h3 class="t-h2">아직 기록이 없어요</h3>
-      <p>토큰 사용 로깅 봇이 기록을 남기면 이 화면에 서비스별 사용률이 자동으로 나타나요. 새 기록은 최대 60초 안에 반영됩니다.</p>
+      <p>토큰 사용 로깅 봇이 기록을 남기면 이 화면에 서비스별 사용률이 자동으로 나타나요.</p>
       <ol><li><div>로깅 봇이 <b>processed/YYYY-MM-DD.jsonl</b>에 한 줄씩 추가합니다 (날짜는 KST 기준).<code>${esc(EMPTY_JSON)}</code></div></li>
-      <li><div>이 화면이 60초마다 자동으로 새로고침되어 카드·추이·표가 채워집니다.</div></li></ol>
+      <li><div>이 화면이 ${REFRESH_INTERVAL}마다 자동으로 새로고침되어 카드·추이·표가 채워집니다.</div></li></ol>
       <button class="btn btn-primary" type="button" data-act="retry">지금 새로고침</button><p class="next">기록 형식은 FORMAT.md 에서 볼 수 있어요.</p></div>`);
     return;
   }
   seg.hidden = false;
   if (setMode("cards", "data")) cardsEl.className = "cards";
   if (modes.kpis !== "data") { modes.kpis = "data"; kpis.innerHTML = ""; }
-  const now = Date.now();
   const all = latestSeries();
   $("limToolbar").hidden = false;
   const sel = fillSeries($("lSeries"), all);
@@ -932,7 +983,7 @@ function renderLimits() {
   const list = all.filter(r => !filtered || sel.includes(serKey(r))).map(r => viewOf(r, now));
   if (!list.length) {
     kpis.innerHTML = ""; modes.kpis = "none";
-    sub.textContent = "조건에 맞는 한도가 없어요";
+    sub.textContent = `${COLLECT_HINT} · 조건에 맞는 한도가 없어요`;
     cardsEl.hidden = false; $("limList").hidden = true;
     if (setMode("cards", "nofilter")) cardsEl.className = "";
     setHTML(cardsEl, `<div class="empty"><p>조건에 맞는 한도가 없어요. 필터에서 "모든 한도"를 선택해 보세요.</p></div>`);
@@ -952,23 +1003,23 @@ function renderLimits() {
     { key:"max", html:kp1 },
     { key:"reset", html:`<div class="kpi"><div class="k">가장 가까운 초기화</div><div class="v">${withReset ? esc(fmtIn(withReset.rs - now)) : "—"}<small>${withReset ? esc(svcName(withReset.r.service)) + " · " + esc(metricLabel(withReset.r.metric)) : ""}</small></div></div>` },
   ]);
-  sub.textContent = `서비스 ${new Set(list.map(v => v.r.service)).size}개 · 한도 ${list.length}개${filtered ? ` (전체 ${all.length}개 중)` : ""} · ${sortMode === "urgent" ? "사용률이 높은 순" : sortMode === "reset" ? "초기화가 가까운 순" : sortMode === "resetLate" ? "초기화가 늦은 순" : "서비스 이름 순"}`;
+  sub.textContent = `${COLLECT_HINT} · 서비스 ${new Set(list.map(v => v.r.service)).size}개 · 한도 ${list.length}개${filtered ? ` (전체 ${all.length}개 중)` : ""} · ${sortMode === "urgent" ? "사용률이 높은 순" : sortMode === "reset" ? "초기화가 가까운 순" : sortMode === "resetLate" ? "초기화가 늦은 순" : "서비스 이름 순"}`;
 
   const listMode = LF.v === "list";
   syncView();
   cardsEl.hidden = listMode; $("limList").hidden = !listMode;
   if (listMode) {
     setHTML($("limBody"), list.map(v => {
-      const r = v.r, n = v.n, st = v.st, lvl = ageLevel(v.age), win = WINDOW_MS(r.metric);
+      const r = v.r, n = v.n, st = v.st, win = WINDOW_MS(r.metric);
       let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
       const reset = v.expired ? `<b>초기화됨</b><span>새 값 대기 중</span>` : v.rs ? (v.rs > now ? `<b>${esc(fmtIn(v.rs - now))}</b><span>${esc(fmtDT(v.rs))}</span>` : `<b>${esc(fmtDT(v.rs))}</b>`) : `<span>—</span>`;
       const val = v.pct && Number.isFinite(n)
         ? `<span class="usage"><span class="usage-value">${fmtPct(n)}%</span><span class="meter" aria-hidden="true"><span class="fill" style="width:${Math.max(0, Math.min(100, n))}%"></span></span></span>`
         : v.pct ? "—" : esc(fmtVal(r));
-      return `<tr><td class="c-svc">${esc(svcName(r.service))}</td><td>${esc(metricLabel(r.metric))}</td><td class="c-note">${esc(r.note || "")}</td><td class="c-val num" data-s="${st}">${val}</td><td class="c-reset">${reset}</td><td>${pace !== null ? Math.round(pace) + "%" : "—"}</td><td class="c-age" data-late="${lvl}" title="${esc(fmtFull(v.ts))}">${esc(fmtAgo(v.age))}${lvl ? " ⚠" : ""}</td></tr>`;
+      return `<tr><td class="c-svc">${esc(svcName(r.service))}${collectionBadge(r.service, now)}</td><td>${esc(metricLabel(r.metric))}</td><td class="c-note">${esc(r.note || "")}</td><td class="c-val num" data-s="${st}">${val}</td><td class="c-reset">${reset}</td><td>${pace !== null ? Math.round(pace) + "%" : "—"}</td><td class="c-age">${recordAge(v)}</td></tr>`;
     }).join(""));
   } else morphList(cardsEl, list.map(v => {
-    const r = v.r, n = v.n, st = v.st, lvl = ageLevel(v.age), win = WINDOW_MS(r.metric);
+    const r = v.r, n = v.n, st = v.st, win = WINDOW_MS(r.metric);
     let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
     let resetHtml;
     if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
@@ -981,11 +1032,11 @@ function renderLimits() {
     const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
     const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span></div>` : "";
     return { key:v.key, html:`<article class="card" data-s="${st}" aria-label="${esc(aria)}">
-      <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${chip}</div>
+      <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${collectionBadge(r.service, now)}${chip}</div>
       <p class="kind">${esc(metricLabel(r.metric))}${r.note ? `<span class="note">${esc(r.note)}</span>` : ""}</p>
       <div class="val-row"><span class="big num">${big}</span><span class="reset">${resetHtml}</span></div>
       ${meter}
-      <div class="card-f"><span class="pacetxt">${pace !== null ? "기간 " + Math.round(pace) + "% 경과" : "&nbsp;"}</span><span class="age" data-late="${lvl}" title="${esc(fmtFull(v.ts))}">${esc(fmtAgo(v.age))} 기록${lvl ? " ⚠" : ""}</span></div>
+      <div class="card-f"><span class="pacetxt">${pace !== null ? "기간 " + Math.round(pace) + "% 경과" : "&nbsp;"}</span>${recordAge(v)}</div>
     </article>` };
   }));
 }
@@ -1229,7 +1280,7 @@ async function loadRaw(force) {
     pre.scrollTop = top; pre.scrollLeft = left;
     pre.dataset.ver = ver; err.hidden = true;
     meta.textContent = `${fmtFull(Date.parse(d.mtime))} · ${Number(d.size).toLocaleString("ko-KR")}바이트${d.truncated ? " · 앞부분 64KB만 표시" : ""}`;
-  } catch (e) { if (my !== rawSeq) return; err.hidden = false; err.textContent = "원본 파일을 불러오지 못했어요. 목록은 60초 뒤 다시 확인합니다."; }
+  } catch (e) { if (my !== rawSeq) return; err.hidden = false; err.textContent = `원본 파일을 불러오지 못했어요. 목록은 ${REFRESH_INTERVAL} 뒤 다시 확인합니다.`; }
 }
 
 /* ---------- 불러오기 ---------- */
@@ -1244,7 +1295,7 @@ async function load() {
   loading = false;
   const rec = results[0];
   if (rec.status === "fulfilled") {
-    const seen = new Set(), nextRecords = [];
+    const seen = new Set(), nextRecords = [], latest = new Map();
     let changed = false;
     for (const r of rec.value.records || []) {
       const k = rowKey(r);
@@ -1253,9 +1304,12 @@ async function load() {
       if (!changed && (!previous || previous.unit !== r.unit || rowKey(previous) !== k)) changed = true;
       seen.add(k);
       nextRecords.push(r);
+      const ts = tms(r.ts);
+      if (ts !== null && ts > (latest.get(r.service) ?? -Infinity)) latest.set(r.service, ts);
     }
     if (changed || nextRecords.length !== RECORDS.length) dataVer++;
     RECORDS = nextRecords;
+    latestByService = latest;
     skipped = rec.value.skipped || 0; totalRecords = rec.value.total ?? RECORDS.length; serverLimit = rec.value.limit || 0;
     loaded = true; fetchFailed = false; lastOkAt = Date.now();
     buildSeries();
@@ -1270,12 +1324,13 @@ async function load() {
   renderAll();
 }
 function renderAll() {
-  renderStatus(); renderBanner(); renderLimits();
+  const now = Date.now();
+  renderCollection(now); renderLimits(now);
   const empty = loaded && !RECORDS.length;
   $("s-trends").hidden = empty; $("s-records").hidden = empty;
   if (!empty) { renderTrends(); renderTable(); }
   renderRawList();
-  const foot = [`60초마다 자동 새로고침`];
+  const foot = [`${REFRESH_INTERVAL}마다 자동 새로고침`];
   if (loaded) foot.unshift(`기록 ${RECORDS.length.toLocaleString("ko-KR")}건`);
   if (skipped) foot.push(`형식이 잘못된 줄 ${skipped}개를 건너뛰었어요`);
   const html = foot.map(t => `<span>${esc(t)}</span>`).join("") + `<span><a href="/api/records">API</a></span>`;
@@ -1283,8 +1338,9 @@ function renderAll() {
 }
 function tick() {   // 30초마다 시간 표시만 갱신 (서버 요청 없음, DOM은 바뀐 부분만)
   if (document.hidden || !loaded && !fetchFailed) return;
-  renderStatus(); renderBanner();
-  if (loaded && RECORDS.length) renderLimits();
+  const now = Date.now();
+  renderCollection(now);
+  if (loaded && RECORDS.length) renderLimits(now);
 }
 
 /* ---------- 테마 ---------- */
@@ -1394,6 +1450,7 @@ document.addEventListener("visibilitychange", () => {
   document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
   if (!document.hidden) { load(); }
 });
+$("rbar").style.setProperty("--refresh-period", `${REFRESH_MS}ms`);
 setInterval(() => { if (!document.hidden) load(); }, REFRESH_MS);
 setInterval(tick, TICK_MS);
 renderAll();

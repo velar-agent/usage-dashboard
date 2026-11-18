@@ -79,5 +79,5 @@ with path.open("a", encoding="utf-8") as f:
 '
 ```
 
-같은 형식으로 `codex` / `claude` / `gemini` / `muse` 줄도 `processed/YYYY-MM-DD.jsonl`에 이어 쓰면 대시보드에 바로 나타납니다 (최대 약 60초 후 자동 새로고침).
-Append further lines for other services the same way; the dashboard picks them up on its 60-second refresh.
+같은 형식으로 `codex` / `claude` / `gemini` / `muse` 줄도 `processed/YYYY-MM-DD.jsonl`에 이어 쓰면 됩니다. 수집 주기는 5분이며, 대시보드 탭을 보고 있는 동안 30초마다 새 기록을 확인합니다.
+Append records for other services in the same format. Collection runs every 5 minutes. The dashboard checks for new records every 30 seconds while the tab is visible.
