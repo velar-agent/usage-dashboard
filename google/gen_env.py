@@ -27,7 +27,7 @@ def write_private(path, text):
         os.fsync(file.fileno())
 
 
-def generate(path, force=False):
+def generate(path, force=False, db_path=None, port=None):
     path = path.expanduser().absolute()
     password_file = path.with_name("raw-password.txt")
     if path == password_file:
@@ -52,7 +52,8 @@ def generate(path, force=False):
         values = {
             "INGEST_KEY": secrets.token_urlsafe(32), "SESSION_SECRET": secrets.token_urlsafe(48),
             "RAW_SALT": salt.hex(), "RAW_HASH": digest.hex(), "RAW_ITERATIONS": ITERATIONS,
-            "DB_PATH": DEFAULT_DB_PATH, "HOST": "127.0.0.1", "PORT": 8787,
+            "DB_PATH": db_path if db_path is not None else DEFAULT_DB_PATH,
+            "HOST": "127.0.0.1", "PORT": port if port is not None else 8787,
         }
         with tempfile.TemporaryDirectory(dir=parent) as temp:
             stage = Path(temp)
@@ -88,9 +89,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", type=Path, default=DEFAULT_ENV, help="전용 디렉터리 안의 env 경로")
     parser.add_argument("--force", action="store_true", help="기존 키와 비밀번호를 모두 교체")
+    parser.add_argument("--db-path", type=Path, default=None, help="env에 기록할 DB_PATH (기본값은 google/data/usage.sqlite3)")
+    parser.add_argument("--port", type=int, default=None, help="env에 기록할 PORT (기본값 8787)")
     args = parser.parse_args()
     try:
-        generate(args.path, args.force)
+        generate(args.path, args.force, args.db_path, args.port)
     except (OSError, ValueError) as exc:
         sys.exit(str(exc))
     print("env와 raw-password.txt를 권한 600으로 저장했어요.")

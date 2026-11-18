@@ -570,6 +570,40 @@ class ToolTests(unittest.TestCase):
             self.assertNotEqual(cli("gen_env.py", env).returncode, 0)
             self.assertFalse(env.exists())
 
+    def test_gen_env_db_path_and_port_options(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = Path(temp) / "cfg" / "env"
+            db = Path(temp) / "data" / "usage.sqlite3"
+            run = cli("gen_env.py", env, "--db-path", db, "--port", "8788")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            values = dict(line.split("=", 1) for line in env.read_text(encoding="utf-8").splitlines() if "=" in line)
+            self.assertEqual(values["DB_PATH"], str(db))
+            self.assertEqual(values["PORT"], "8788")
+
+    def test_prod_unit_file_exists_and_has_no_port_hardcode(self):
+        unit = GOOGLE_DIR / "usage-dashboard-google-prod.service"
+        self.assertTrue(unit.is_file(), "prod 유닛 파일이 없어요")
+        text = unit.read_text(encoding="utf-8")
+        for needle in (
+            "Description=Usage Dashboard Google Prod",
+            "WorkingDirectory=/workspace/usage-dashboard-prod/google",
+            "EnvironmentFile=/home/collector/.config/usage-dashboard-google-prod/env",
+            "ReadWritePaths=/workspace/usage-dashboard-prod-data",
+            "ProtectSystem=strict",
+        ):
+            self.assertIn(needle, text)
+        # PORT는 env 파일에서만 관리해요 (유닛에 하드코딩하지 않아요)
+        self.assertNotIn("Environment=PORT", text)
+        self.assertNotIn("8788", text, "유닛에는 포트 하드코딩이 없어야 해요")
+        # Cloudflare 관련은 건드리지 않아요
+        self.assertNotIn("workers.dev", text)
+        self.assertNotIn("cloudflared", text)
+        # dev 유닛과 같은 hardening을 유지해요
+        dev = (GOOGLE_DIR / "usage-dashboard-google-dev.service").read_text(encoding="utf-8")
+        for line in dev.splitlines():
+            if line.startswith("Protect") or line.startswith("Private") or line.startswith("NoNew") or line.startswith("UMask") or line.startswith("Restrict"):
+                self.assertIn(line, text, f"hardening 라인 {line!r}이 prod에 없어요")
+
 
 if __name__ == "__main__":
     unittest.main()
