@@ -412,8 +412,9 @@ section:first-of-type { margin-top:0; }
 
 .meter { position:relative; height:8px; background:var(--track); border-radius:var(--r-pill); }
 .meter .fill { position:absolute; inset:0 auto 0 0; border-radius:var(--r-pill); background:var(--ok); min-width:4px; }
-.card[data-s="warn"] .fill { background:var(--warn); } .card[data-s="bad"] .fill { background:var(--bad); }
-.card[data-s="na"] .fill { background:var(--muted); }
+.card[data-s="warn"] .fill, .lim-list td[data-s="warn"] .fill { background:var(--warn); }
+.card[data-s="bad"] .fill, .lim-list td[data-s="bad"] .fill { background:var(--bad); }
+.card[data-s="na"] .fill, .lim-list td[data-s="na"] .fill { background:var(--muted); }
 .card-f { display:flex; justify-content:space-between; gap:var(--sp-2); color:var(--muted); font-size:12px; line-height:16px; }
 .card-f .age[data-late="1"] { color:var(--warn); font-weight:600; }
 .card-f .age[data-late="2"] { color:var(--bad); font-weight:600; }
@@ -486,6 +487,12 @@ section:first-of-type { margin-top:0; }
 .lim-list td.c-age[data-late="1"], .lim-list td.c-age[data-late="2"] { color:var(--warn); }
 .lim-list td { white-space:nowrap; }
 .lim-list td.c-note { white-space:normal; }
+.lim-list td.c-val { width:25%; }
+.lim-list .usage { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-1) var(--sp-2); }
+.lim-list .usage-value { min-width:5ch; }
+.lim-list .meter { flex:1; min-width:120px; }
+.lim-list .fill { min-width:0; }
+@media (min-width:720px) and (max-width:959px){ .lim-list th, .lim-list td { padding-inline:6px; } }
 @media (max-width:719px){ .toolbar.lim-tb { grid-template-columns:1fr; } .lim-tb .seg button { height:40px; flex:1; } .lim-tb .seg { display:flex; } }
 .toolbar { display:grid; grid-template-columns:160px 160px minmax(200px,1fr) auto; gap:var(--sp-2); align-items:end; margin-bottom:var(--sp-3); }
 .field { display:flex; flex-direction:column; gap:4px; min-width:0; }
@@ -532,6 +539,10 @@ a.raw-link { color:var(--accent); font-size:12px; margin-left:6px; text-decorati
   td.c-reset::before,td.c-note::before,td.c-src::before { content:attr(data-label) "  "; color:var(--muted); display:inline-block; min-width:44px; }
   td.c-note:empty,td.c-src:empty { display:none; }
   .more { border:0; }
+  .lim-list td { white-space:normal; overflow-wrap:anywhere; }
+  .lim-list td.c-val { grid-column:1 / -1; grid-row:2; width:auto; text-align:left; }
+  .lim-list .usage { display:grid; gap:var(--sp-1); }
+  .lim-list .meter { min-width:0; }
 }
 
 /* =========================================================
@@ -951,7 +962,9 @@ function renderLimits() {
       const r = v.r, n = v.n, st = v.st, lvl = ageLevel(v.age), win = WINDOW_MS(r.metric);
       let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
       const reset = v.expired ? `<b>초기화됨</b><span>새 값 대기 중</span>` : v.rs ? (v.rs > now ? `<b>${esc(fmtIn(v.rs - now))}</b><span>${esc(fmtDT(v.rs))}</span>` : `<b>${esc(fmtDT(v.rs))}</b>`) : `<span>—</span>`;
-      const val = v.pct ? `${Number.isFinite(n) ? fmtPct(n) + "%" : "—"}<span class="mini"><i style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></i></span>` : esc(fmtVal(r));
+      const val = v.pct && Number.isFinite(n)
+        ? `<span class="usage"><span class="usage-value">${fmtPct(n)}%</span><span class="meter" aria-hidden="true"><span class="fill" style="width:${Math.max(0, Math.min(100, n))}%"></span></span></span>`
+        : v.pct ? "—" : esc(fmtVal(r));
       return `<tr><td class="c-svc">${esc(svcName(r.service))}</td><td>${esc(metricLabel(r.metric))}</td><td class="c-note">${esc(r.note || "")}</td><td class="c-val num" data-s="${st}">${val}</td><td class="c-reset">${reset}</td><td>${pace !== null ? Math.round(pace) + "%" : "—"}</td><td class="c-age" data-late="${lvl}" title="${esc(fmtFull(v.ts))}">${esc(fmtAgo(v.age))}${lvl ? " ⚠" : ""}</td></tr>`;
     }).join(""));
   } else morphList(cardsEl, list.map(v => {
