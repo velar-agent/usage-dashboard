@@ -1,0 +1,27 @@
+[Unit]
+Description=Usage Dashboard Google Dev
+After=network.target
+
+[Service]
+Type=simple
+User=collector
+WorkingDirectory=/workspace/usage-dashboard/google
+EnvironmentFile=/home/collector/.config/usage-dashboard-google-dev/env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/workspace/usage-dashboard/google/data
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

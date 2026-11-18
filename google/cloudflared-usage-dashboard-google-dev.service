@@ -1,0 +1,18 @@
+[Unit]
+Description=Quick tunnel for Usage Dashboard Google Dev
+Wants=network-online.target usage-dashboard-google-dev.service
+After=network-online.target usage-dashboard-google-dev.service
+
+[Service]
+Type=simple
+User=collector
+ExecStart=/home/collector/.local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8787
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
