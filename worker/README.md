@@ -11,7 +11,7 @@
 | 바인딩 | `DB`(D1), 시크릿 `INGEST_KEY` `SESSION_SECRET` `RAW_SALT` `RAW_HASH` `RAW_ITERATIONS` |
 
 ## 파일
-- `src/index.js` — Worker 본체 (화면 제공, `/api/records`, `/health`, `/api/raw*`, `/api/ingest`, `/api/raw/upload`)
+- `src/index.js` — Worker 본체 (화면 제공, `/api/records`, `/api/trends`, `/health`, `/api/raw*`, `/api/ingest`, `/api/raw/upload`)
 - `src/html.js` — 화면(HTML/CSS/JS). `web/server.py` 의 `INDEX_HTML` 을 옮긴 것. 화면을 고쳤다면 `python3 scripts/sync-html.py`
 - `schema.sql` — D1 테이블 (`records`, `raw_files`, `login_fails`, `revoked_sessions`)
 - `wrangler.toml` — wrangler 로 배포할 때 쓰는 설정
@@ -135,8 +135,32 @@ VM 의 시스템 cron 은 재부팅 뒤에도 그대로 돌아요. cron 은 채�
 
 수동 롤백(API): `promote-dev-to-prod.py status` 로 이전 배포의 version id 를 확인한 뒤, 대시보드의 Worker → Deployments 에서 되돌리거나 API `POST /accounts/<acct>/workers/scripts/usage-dashboard/deployments` 에 `{"strategy":"percentage","versions":[{"version_id":"<id>","percentage":100}]}` 를 보냅니다. 자정 배포가 반복해서 같은 코드를 올리지 않게 하려면 먼저 VM 의 자정 cron 을 위처럼 일시 중지하거나 개발에 되돌릴 코드를 올려 두세요.
 
+## 기록과 추이 조회
+
+두 GET API는 공개이며 쿼리 문자열을 포함한 URL별로 성공 응답을 엣지에 20초 캐시해요. 브라우저 응답은 `Cache-Control: no-store`예요. 기록 객체는 추가 필드를 포함한 기존 공개 형식이고, 배열은 모두 최신순이에요.
+
+| 경로 | 파라미터 | 응답 |
+| --- | --- | --- |
+| `/api/records` | 기존 `service`, `metric`, `q`, `limit`(기본 5,000, 최대 20,000). `since`는 포함할 시작 시각(ISO 8601, 시간대 생략 시 KST) | `records`, `count`, `total`, `limit`, `skipped`, `generated_at`, `timezone`, `has_more`(조건에 맞는 기록이 limit 초과) |
+| `/api/records?latest=1&total=0` | 각 옵션은 독립적으로 사용 가능 | `latest=1`은 서비스·지표·메모별 전체 최신 행 중 필터를 만족한 행을 별도 `latest` 배열로 추가해요. 최근 페이지와 겹칠 수 있고 `count`는 `records`만 세요. `total=0`은 전체 건수 집계를 생략하고 `total: null`을 반환해요. 기본값은 정확한 정수예요. |
+| `/api/trends?range=7d` | `range`는 `24h`, `7d`(기본), `all`. 잘못된 값은 HTTP 400과 `{"error":"…"}` | `records`, `range`, `since`(KST, 전체는 `null`), `generated_at`(조회 종료 시각, KST), `timezone`, `bucket_minutes`, `count`(실제 반환 수), `limit`(20,000), `truncated`(상한 때문에 생략한 지점이 있음) |
+
+24시간은 원본(`bucket_minutes=0`), 7일은 30분 간격이에요. 전체는 첫 기록부터 마지막 기록까지 14일 이하면 60분, 60일 이하면 180분, 그 이상은 360분이에요. 각 시리즈에서 버킷의 마지막 기록과 값이 감소한 직전·직후, 첫 기록 및 최신 기록을 조회 기간 안에서 보존해요. 상한을 넘으면 최신, 첫 기록, 감소 양끝, 더 긴 버킷의 마지막 값 순으로 지점을 남겨요.
+
+### 기존 D1에 추이 색인 적용
+
+각 환경의 Worker를 교체하기 직전에 해당 D1에 `worker/schema.sql`을 한 번 적용하세요. 기존 행의 `trend_points`를 채우고, 이후 수집은 INSERT 트리거가 같은 트랜잭션에서 새 행과 같은 시리즈의 이웃 두 행을 갱신해요. 조회는 등급과 시각 색인을 사용해요.
+
+스키마 적용과 코드 교체 사이에 수집하면 구버전은 트리거 쓰기까지 `inserted`에 더해 응답 건수가 어긋나요. 새 버전은 `RETURNING id`로 실제로 삽입된 기록만 세요.
+
+```bash
+cd worker
+npx wrangler d1 execute DB --env dev --remote --file=schema.sql  # 개발 코드 교체 직전
+npx wrangler d1 execute DB --remote --file=schema.sql            # 운영 코드 교체 직전
+```
+
 ## 동작 메모
-- `/api/records` 응답은 같은 주소 기준 엣지에 20초 캐시돼요(D1 읽기량 절약). 새 기록은 최대 20초 뒤에 보여요.
+
 - 원본 열람 비밀번호: `RAW_HASH`(PBKDF2-SHA256, 10,000회). 세션은 서명된 HttpOnly·Secure·SameSite=Strict 쿠키 12시간. 로그아웃하면 해당 세션은 D1 `revoked_sessions` 로 무효화돼요. 틀린 비밀번호는 IP당 1분에 5번까지.
 - 기록 보내는 법은 `/workspace/token-usage/INGEST.md`.
 - 무료 플랜 제약: Worker 호출당 D1 질의 50개 → `/api/ingest` 는 한 번에 40건까지.

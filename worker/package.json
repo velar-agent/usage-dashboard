@@ -1,1 +1,1 @@
-{"name":"token-dashboard","private":true,"type":"module","scripts":{"deploy":"wrangler deploy","dev":"wrangler dev"},"dependencies":{"wrangler":"^4.162.0"}}
+{"name":"token-dashboard","private":true,"type":"module","scripts":{"deploy":"wrangler deploy","dev":"wrangler dev","test":"node --test"},"dependencies":{"wrangler":"^4.162.0"}}

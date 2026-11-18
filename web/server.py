@@ -24,6 +24,8 @@ DATE_FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
 MAX_RAW_FILES = 8
 MAX_RAW_BYTES = 64 * 1024
 MAX_RECORDS_DEFAULT = 5000
+MAX_TREND_POINTS = 20000
+TREND_MINUTES = (0, 30, 60, 180, 360)
 
 COOKIE_NAME = "raw_session"
 SESSION_TTL = timedelta(hours=12)
@@ -216,6 +218,70 @@ def public_record(rec: dict) -> dict:
     item = {k: v for k, v in rec.items() if not k.startswith("_")}
     item["ts"] = rec.get("ts", rec.get("_ts"))
     return item
+
+
+def series_key(rec: dict) -> tuple:
+    return tuple(str(rec.get(k) or "") for k in ("service", "metric", "note"))
+
+
+def trend_payload(records: list[dict], period: str, now: datetime) -> dict:
+    """로컬 JSONL 서버도 Worker와 같은 버킷의 마지막 기록과 초기화 양끝을 돌려준다."""
+    end = to_iso(now)
+    history = [r for r in records if r["_ts"] <= end]
+    since = None
+    if period == "all":
+        span = parse_ts(history[0]["_ts"]) - parse_ts(history[-1]["_ts"]) if history else timedelta()
+        minutes = 60 if span <= timedelta(days=14) else 180 if span <= timedelta(days=60) else 360
+    else:
+        since = to_iso(now - timedelta(days=1 if period == "24h" else 7))
+        minutes = 0 if period == "24h" else 30
+
+    groups = {}
+    for i, rec in enumerate(history):
+        indices = groups.setdefault(series_key(rec), [])
+        if not indices or history[indices[-1]]["_ts"] != rec["_ts"]:
+            indices.append(i)
+
+    def value(rec):
+        try:
+            return float(rec.get("value"))
+        except (ValueError, TypeError, OverflowError):
+            return float("nan")
+
+    picks = []
+    min_rank = TREND_MINUTES.index(minutes)
+    for indices in groups.values():
+        for j, i in enumerate(indices):
+            rec = history[i]
+            if since and rec["_ts"] < since:
+                break
+            if j == 0:
+                rank = 7  # schema.sql과 같은 등급
+            elif j == len(indices) - 1:
+                rank = 6
+            else:
+                newer, older = history[indices[j - 1]], history[indices[j + 1]]
+                if value(newer) < value(rec) or value(rec) < value(older):
+                    rank = 5
+                else:
+                    t = int(parse_ts(rec["_ts"]).timestamp())
+                    n = int(parse_ts(newer["_ts"]).timestamp())
+                    rank = 0
+                    for level in range(len(TREND_MINUTES) - 1, 0, -1):
+                        seconds = TREND_MINUTES[level] * 60
+                        if t // seconds != n // seconds:
+                            rank = level
+                            break
+            if rank >= min_rank:
+                picks.append((-rank, i))
+    truncated = len(picks) > MAX_TREND_POINTS
+    if truncated:
+        picks.sort()
+        picks = picks[:MAX_TREND_POINTS]
+    rows = [public_record(history[i]) for i in sorted(i for _, i in picks)]
+    return {"records": rows, "range": period, "since": since, "bucket_minutes": minutes,
+            "count": len(rows), "limit": MAX_TREND_POINTS, "truncated": truncated,
+            "generated_at": end, "timezone": "Asia/Seoul"}
 
 
 INDEX_HTML = r"""<!DOCTYPE html>
@@ -669,7 +735,7 @@ td.c-time[data-dup] { color:var(--muted); }
 
   <section id="s-trends" aria-labelledby="h-trends">
     <div class="sec-h">
-      <div><h2 class="t-h2" id="h-trends">추이</h2><p class="sub">세로축 0–100% 고정 · 가로 점선은 60% / 85% 기준 · 음영은 미래 구간</p></div>
+      <div><h2 class="t-h2" id="h-trends">추이</h2><p class="sub">세로축 0–100% 고정 · 가로 점선은 60% / 85% 기준 · 음영은 미래 구간</p><p class="sub" id="trendStatus" role="status"></p></div>
       <div class="seg" role="group" aria-label="기간">
         <button type="button" data-range="24h" aria-pressed="false">24시간</button>
         <button type="button" data-range="7d" aria-pressed="false">7일</button>
@@ -816,7 +882,7 @@ function setHTML(el, html) { if (el.__h !== html) { el.__h = html; el.innerHTML 
 let RECORDS = [];          // 최신순, 중복 제거
 let latestByService = new Map();   // 한도 필터와 무관한 서비스별 마지막 기록 시각
 let RAW_LIST = [], rawListOk = true, rawLoaded = false, rawAuthed = false, rawLocked = false, pendingRaw = "";
-let loaded = false, fetchFailed = false, lastOkAt = null, skipped = 0, totalRecords = 0, serverLimit = 0;
+let loaded = false, fetchFailed = false, lastOkAt = null, skipped = 0, hasMoreRecords = false, serverLimit = 0, extraLatest = 0;
 const LF = (() => { try { return JSON.parse(localStorage.getItem("limFilter") || "{}") || {}; } catch (e) { return {}; } })();
 LF.k = Array.isArray(LF.k) ? LF.k : []; delete LF.s; delete LF.m;
 const saveLF = () => { try { localStorage.setItem("limFilter", JSON.stringify(LF)); } catch (e) {} };
@@ -846,8 +912,9 @@ function fillSeries(el, rows) {
 const SORTS = ["urgent", "reset", "resetLate", "service"];
 let sortMode = SORTS.includes(LF.o) ? LF.o : "urgent", userRange = ["24h", "7d", "all"].includes(LF.r) ? LF.r : null, shown = 0;   // 추이 기간: 고른 값은 새로고침해도 유지
 const seriesVisible = {};
-let SERIES = new Map();    // service -> [series]
-let dataVer = 0;
+const trendCache = new Map();
+const rangeLabel = { "24h":"24시간", "7d":"7일", all:"전체" };
+let displayedTrend = null;
 const pageSize = () => matchMedia("(max-width:719px)").matches ? 10 : 30;
 shown = pageSize();
 
@@ -1043,14 +1110,14 @@ function renderLimits(now = Date.now()) {
 
 /* ---------- 차트 (인라인 SVG, 고정 높이 비율) ---------- */
 const DASH = ["", "7 4", "2 3", "9 3 2 3", "1 4"];
-function buildSeries() {
+function buildSeries(records) {
   const by = new Map();   // service -> Map(key -> rows)
-  for (let i = RECORDS.length - 1; i >= 0; i--) {
-    const r = RECORDS[i]; if (!isPctRec(r) || !Number.isFinite(num(r.value)) || tms(r.ts) === null) continue;
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i]; if (!isPctRec(r) || !Number.isFinite(num(r.value)) || tms(r.ts) === null) continue;
     const s = r.service || "기타"; if (!by.has(s)) by.set(s, new Map());
     const m = by.get(s), k = serKey(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r);
   }
-  SERIES = new Map();
+  const series = new Map();
   for (const [svc, m] of by) {
     const out = []; let i = 0;
     for (const [k, rows] of m) {
@@ -1058,24 +1125,41 @@ function buildSeries() {
       out.push({ key:k, label:`${metricLabel(f.metric)}${f.note ? " · " + f.note : ""}`, color:`var(--s${(i % 5) + 1})`, dash:DASH[i % 5], rows });
       i++;
     }
-    SERIES.set(svc, out);
+    series.set(svc, out);
   }
+  return series;
 }
 function effRange() {
   if (userRange) return userRange;
-  const ts = RECORDS.map(r => tms(r.ts)).filter(t => t !== null);
-  if (!ts.length) return "7d";
-  return Date.now() - Math.min(...ts) < 24 * 3600e3 ? "all" : "7d";   // 기록이 하루도 안 쌓였으면 '전체'로 보여 줌
+  const oldest = tms(RECORDS.at(-1)?.ts);
+  return oldest !== null && Date.now() - oldest < 24 * 3600e3 ? "all" : "7d";
 }
 function renderTrends() {
   const root = $("charts"), rng = effRange();
+  const entry = trendCache.get(rng);
+  if (entry?.series) displayedTrend = entry;
   document.querySelectorAll("[data-range]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.range === rng)));
-  if (!loaded) { if (setMode("charts", "skel")) root.innerHTML = Array.from({ length:4 }, () => `<div class="chart-card" aria-hidden="true"><div class="skel" style="height:18px;width:30%"></div><div class="skel" style="height:200px;margin-top:16px;border-radius:12px"></div></div>`).join(""); return; }
-  const services = [...SERIES.keys()];
-  const sparse = ![...SERIES.values()].some(arr => arr.some(s => s.rows.length >= 2));
+  const status = [];
+  if (entry?.error) status.push(`${rangeLabel[rng]} 추이 갱신 실패`);
+  else if (!entry || entry.loading) status.push(`${rangeLabel[rng]} 추이 불러오는 중…`);
+  if (displayedTrend) {
+    if (displayedTrend.range !== rng || entry?.error) status.push(`이전에 받은 ${rangeLabel[displayedTrend.range]} 추이 표시 중`);
+    if (displayedTrend.minutes) status.push(`${displayedTrend.minutes}분 간격으로 요약`);
+    if (displayedTrend.truncated) status.push(`${displayedTrend.count.toLocaleString("ko-KR")}건 상한으로 일부 지점 생략`);
+  }
+  const message = status.join(" · ");
+  if ($("trendStatus").textContent !== message) $("trendStatus").textContent = message;
+  $("trendStatus").hidden = !message;
+  if (!displayedTrend) {
+    if (entry?.error) { setMode("charts", "error"); return; }
+    if (setMode("charts", "skel")) root.innerHTML = Array.from({ length:4 }, () => `<div class="chart-card" aria-hidden="true"><div class="skel" style="height:18px;width:30%"></div><div class="skel" style="height:200px;margin-top:16px;border-radius:12px"></div></div>`).join("");
+    return;
+  }
+  const services = [...displayedTrend.series.keys()];
+  const sparse = ![...displayedTrend.series.values()].some(arr => arr.some(s => s.rows.length >= 2));
   if (!services.length || sparse) {
     if (setMode("charts", "sparse")) root.innerHTML = "";
-    setHTML(root, `<div class="chart-empty" style="grid-column:1/-1;min-height:140px"><div><b style="color:var(--ink-2)">아직 추이를 그릴 만큼 기록이 쌓이지 않았어요</b><br>시리즈마다 기록이 2건 이상 생기면 서비스별 그래프가 나타납니다. 지금은 위 카드의 최근 값을 확인하세요.</div></div>`);
+    setHTML(root, `<div class="chart-empty" style="grid-column:1/-1;min-height:140px"><div><b style="color:var(--ink-2)">이 기간에 추이를 그릴 사용률 기록이 부족해요</b><br>같은 시리즈에 기록이 2건 이상 있으면 그래프가 나타납니다.</div></div>`);
     return;
   }
   setMode("charts", "data");
@@ -1089,7 +1173,7 @@ function renderTrends() {
     const want = prev ? prev.nextElementSibling : root.firstElementChild;
     if (card !== want) root.insertBefore(card, want);
     prev = card;
-    const ser = SERIES.get(svc);
+    const ser = displayedTrend.series.get(svc);
     morphList(card.querySelector("[data-legend]"), ser.map(s => ({ key:s.key,
       html:`<button class="lg" type="button" aria-pressed="${seriesVisible[s.key]}"><svg viewBox="0 0 20 8" aria-hidden="true"><line x1="1" y1="4" x2="19" y2="4" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/></svg>${esc(s.label)}</button>` })));
     drawChart(card);
@@ -1097,11 +1181,11 @@ function renderTrends() {
   have.forEach(c => c.remove());
 }
 function drawChart(card) {
-  const plot = card.querySelector("[data-plot]"), ser = SERIES.get(card.dataset.svc) || [];
+  const plot = card.querySelector("[data-plot]"), ser = displayedTrend.series.get(card.dataset.svc) || [];
   const W = Math.max(240, Math.round(plot.clientWidth || card.clientWidth - 34 || 320));
   const H = Math.max(180, Math.min(260, Math.round(W * 0.42)));
   const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
-  const rng = effRange(), now = Date.now();
+  const rng = displayedTrend.range, now = Date.now();
   const vis = ser.filter(s => seriesVisible[s.key]);
   const futureResets = new Map();
   for (const s of vis) {
@@ -1112,7 +1196,7 @@ function drawChart(card) {
   const t1 = Math.min(maxEnd, Math.max(now, ...futureResets.values()));
   const clockStep = futureResets.size ? REFRESH_MS : 10 * MIN;
   const endKey = t1 === now || t1 === maxEnd ? Math.floor(t1 / clockStep) : t1;
-  const sig = [W, H, rng, dataVer, Math.floor(now / clockStep), endKey,
+  const sig = [W, H, rng, displayedTrend.version, Math.floor(now / clockStep), endKey,
     ...vis.map(s => `${s.key}:${futureResets.get(s) ?? ""}`)].join("|");
   if (plot.dataset.sig === sig) return;
   plot.dataset.sig = sig; plot.style.height = H + "px";
@@ -1207,7 +1291,8 @@ function renderTable() {
   fillSelect($("fService"), [...new Set(RECORDS.map(r => r.service).filter(Boolean))].sort(), "모든 서비스", svcName);
   fillSelect($("fMetric"), [...new Set(RECORDS.map(r => r.metric).filter(Boolean))].sort(), "모든 지표", metricLabel);
   const rows = filteredRows();
-  count.textContent = `${rows.length.toLocaleString("ko-KR")}건${serverLimit && totalRecords > serverLimit ? ` (최근 ${serverLimit.toLocaleString("ko-KR")}건만 불러옴)` : ""}`;
+  const scope = hasMoreRecords ? `최근 ${serverLimit.toLocaleString("ko-KR")}건${extraLatest ? ` + 시리즈별 최신 ${extraLatest}건` : ""}` : "";
+  count.textContent = `${rows.length.toLocaleString("ko-KR")}건${scope ? ` (${scope})` : ""}`;
   if (!rows.length) {
     setMode("tbody", "none"); more.hidden = true;
     setHTML(tb, `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">조건에 맞는 기록이 없어요. <button class="btn" type="button" data-act="clear" style="margin-left:8px">필터 지우기</button></td></tr>`);
@@ -1285,34 +1370,54 @@ async function loadRaw(force) {
 
 /* ---------- 불러오기 ---------- */
 async function getJSON(url) { const res = await fetch(url, { cache:"no-store", credentials:"same-origin" }); if (!res.ok) throw new Error(String(res.status)); return res.json(); }
+async function loadTrends() {
+  const range = effRange();
+  let entry = trendCache.get(range);
+  if (!entry) { entry = { range, version:0, fetchedAt:0 }; trendCache.set(range, entry); }
+  if (entry.loading || Date.now() - entry.fetchedAt < 20e3) { renderTrends(); return; }
+  entry.loading = true; entry.error = false;
+  renderTrends();
+  try {
+    const data = await getJSON("/api/trends?range=" + range);
+    if (data.range !== range || !Array.isArray(data.records)) throw new Error("추이 응답 형식");
+    entry.series = buildSeries(data.records);
+    entry.minutes = data.bucket_minutes; entry.truncated = data.truncated; entry.count = data.count;
+    entry.fetchedAt = Date.now(); entry.version++;
+  } catch (e) { entry.error = true; }
+  finally {
+    entry.loading = false;
+    if (range === effRange()) renderTrends();
+  }
+}
 let loading = false;
 async function load() {
+  const rangeAtStart = loaded ? (RECORDS.length ? effRange() : null) : userRange;
+  if (rangeAtStart) loadTrends();
   if (loading) return; loading = true;
   const wantRaw = rawAuthed || !rawLoaded;
-  const tasks = [getJSON("/api/records")];
+  const tasks = [getJSON("/api/records?latest=1&total=0")];
   if (wantRaw) tasks.push(fetchRawList().catch(() => "error"));
   const results = await Promise.allSettled(tasks);
   loading = false;
   const rec = results[0];
   if (rec.status === "fulfilled") {
     const seen = new Set(), nextRecords = [], latest = new Map();
-    let changed = false;
-    for (const r of rec.value.records || []) {
+    const recent = rec.value.records || [];
+    // latest도 최신순이다. 최근 페이지와 겹치는 행을 빼면 뒤에는 더 오래된 행만 남는다.
+    extraLatest = 0;
+    for (const [i, r] of recent.concat(rec.value.latest || []).entries()) {
       const k = rowKey(r);
       if (seen.has(k)) continue;
-      const previous = RECORDS[nextRecords.length];
-      if (!changed && (!previous || previous.unit !== r.unit || rowKey(previous) !== k)) changed = true;
+      if (i >= recent.length) extraLatest++;
       seen.add(k);
       nextRecords.push(r);
       const ts = tms(r.ts);
       if (ts !== null && ts > (latest.get(r.service) ?? -Infinity)) latest.set(r.service, ts);
     }
-    if (changed || nextRecords.length !== RECORDS.length) dataVer++;
     RECORDS = nextRecords;
     latestByService = latest;
-    skipped = rec.value.skipped || 0; totalRecords = rec.value.total ?? RECORDS.length; serverLimit = rec.value.limit || 0;
+    skipped = rec.value.skipped || 0; hasMoreRecords = rec.value.has_more; serverLimit = rec.value.limit || 0;
     loaded = true; fetchFailed = false; lastOkAt = Date.now();
-    buildSeries();
     const bar = $("rbar"); bar.classList.remove("run"); void bar.offsetWidth; bar.classList.add("run");
   } else fetchFailed = true;
   if (wantRaw) {
@@ -1322,6 +1427,7 @@ async function load() {
     else if (raw.status === "rejected" && !rawLocked) rawListOk = false;
   }
   renderAll();
+  if ((!loaded || RECORDS.length) && effRange() !== rangeAtStart) loadTrends();
 }
 function renderAll() {
   const now = Date.now();
@@ -1374,7 +1480,7 @@ document.addEventListener("keydown", ev => { if (ev.key === "Escape") document.q
 function syncSort() { document.querySelectorAll("[data-sort]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.sort === sortMode))); }
 syncSort(); syncView();
 document.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { sortMode = b.dataset.sort; LF.o = sortMode; saveLF(); syncSort(); renderLimits(); });
-document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { userRange = LF.r = b.dataset.range; saveLF(); renderTrends(); });
+document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { userRange = LF.r = b.dataset.range; saveLF(); loadTrends(); });
 ["fService", "fMetric", "fQ"].forEach(id => $(id).addEventListener("input", () => { shown = pageSize(); renderTable(); }));
 $("btnMore").onclick = () => { shown += 50; renderTable(); };
 $("btnRefresh").onclick = () => load();
@@ -1445,7 +1551,7 @@ $("rawLogout").addEventListener("click", async ev => {
 });
 let rt, lastW = 0;
 new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(() => { const w = $("main").clientWidth; if (w === lastW) return; lastW = w;
-  if (loaded && RECORDS.length) document.querySelectorAll(".chart-card[data-svc]").forEach(drawChart); }, 80); }).observe($("main"));
+  if (displayedTrend) document.querySelectorAll(".chart-card[data-svc]").forEach(drawChart); }, 80); }).observe($("main"));
 document.addEventListener("visibilitychange", () => {
   document.documentElement.dataset.hidden = document.hidden ? "1" : "0";
   if (!document.hidden) { load(); }
@@ -1541,7 +1647,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
             return
         if path == "/api/records":
-            self._api_records(parse_qs(parsed.query))
+            self._api_records(parse_qs(parsed.query, keep_blank_values=True))
+            return
+        if path == "/api/trends":
+            period = parse_qs(parsed.query, keep_blank_values=True).get("range", ["7d"])[0]
+            if period not in ("24h", "7d", "all"):
+                self._json(400, {"error": "`range`는 24h, 7d, all 중 하나여야 해요."})
+                return
+            records, _ = load_records(self.root / "processed")
+            self._json(200, trend_payload(records, period, now_kst()))
             return
         if path == "/api/raw":
             if not self._raw_authorized():
@@ -1633,18 +1747,31 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True}, cors=False, cookies=[self._set_cookie("", 0)])
 
     def _api_records(self, query: dict) -> None:
-        records, skipped = load_records(self.root / "processed")
         service = (query.get("service") or [""])[0].strip()
         metric = (query.get("metric") or [""])[0].strip()
         q = (query.get("q") or [""])[0].strip().lower()
+        include_latest = query.get("latest", [""])[0] == "1"
+        include_total = query.get("total", [""])[0] != "0"
+        since = parse_ts(query["since"][0]) if "since" in query else None
+        if "since" in query and since is None:
+            self._json(400, {"error": "`since`는 ISO 8601 시각이어야 해요."})
+            return
+        since_kst = to_iso(since) if since else ""
+        records, skipped = load_records(self.root / "processed")
         try:
             limit = int((query.get("limit") or [str(MAX_RECORDS_DEFAULT)])[0])
         except ValueError:
             limit = MAX_RECORDS_DEFAULT
         limit = max(1, min(limit, 20000))
-        filtered = []
+        filtered, latest, seen = [], [], set()
         total = 0
         for rec in records:
+            if rec["_ts"] < since_kst:
+                break
+            if include_latest:
+                key = series_key(rec)
+                is_latest = key not in seen
+                seen.add(key)
             pub = public_record(rec)
             if service and str(pub.get("service") or "") != service:
                 continue
@@ -1657,12 +1784,18 @@ class Handler(BaseHTTPRequestHandler):
             total += 1
             if len(filtered) < limit:
                 filtered.append(pub)
+            if include_latest and is_latest:
+                latest.append(pub)
+            if not include_total and not include_latest and total > limit:
+                break
         self._json(
             200,
             {
                 "records": filtered,
                 "count": len(filtered),
-                "total": total,
+                "total": total if include_total else None,
+                "has_more": total > limit,
+                **({"latest": latest} if include_latest else {}),
                 "limit": limit,
                 "skipped": skipped,
                 "generated_at": to_iso(now_kst()),

@@ -11,6 +11,9 @@ const MAX_RAW_FILES = 8;
 const MAX_RAW_BYTES = 64 * 1024; // 화면에 보여 주는 최대 크기
 const MAX_RAW_UPLOAD_CHARS = 200 * 1024;
 const MAX_RECORDS_DEFAULT = 5000;
+const MAX_TREND_POINTS = 20000;
+const TREND_MINUTES = [0, 30, 60, 180, 360]; // schema.sql의 sample_rank 순서. 0은 원본.
+const LATEST_RANK = 7;
 const MAX_INGEST_RECORDS = 40; // 무료 플랜: Worker 한 번 호출당 D1 질의 50개 제한을 넘지 않도록
 const MAX_INGEST_BODY = 256 * 1024;
 const MAX_RECORD_BYTES = 4096;
@@ -193,47 +196,109 @@ function publicRecord(row) {
   return item;
 }
 
-async function apiRecords(request, env, ctx) {
+async function cachedRead(request, ctx, read) {
   const cache = caches.default;
-  const cacheKey = new Request(new URL(request.url).toString(), { method: "GET" });
+  const cacheKey = new Request(request.url, { method: "GET" }); // 필터·기간을 포함한 전체 URL
   const hit = await cache.match(cacheKey);
   if (hit) {
     const r = new Response(hit.body, hit);
     r.headers.set("Cache-Control", "no-store");
     return r;
   }
-  const url = new URL(request.url);
+  const res = await read();
+  if (res.ok) {
+    const toCache = new Response(res.clone().body, res);
+    toCache.headers.set("Cache-Control", "public, max-age=20");
+    ctx.waitUntil(cache.put(cacheKey, toCache));
+  }
+  return res;
+}
+
+async function apiRecords(url, env) {
   const service = (url.searchParams.get("service") || "").trim();
   const metric = (url.searchParams.get("metric") || "").trim();
   const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+  const includeLatest = url.searchParams.get("latest") === "1";
+  const includeTotal = url.searchParams.get("total") !== "0";
   const limRaw = (url.searchParams.get("limit") ?? String(MAX_RECORDS_DEFAULT)).trim();
   let limit = /^[+-]?\d+$/.test(limRaw) ? parseInt(limRaw, 10) : MAX_RECORDS_DEFAULT;
   limit = Math.max(1, Math.min(limit, 20000));
   const where = [];
   const args = [];
-  if (service) { where.push("service = ?"); args.push(service); }
-  if (metric) { where.push("metric = ?"); args.push(metric); }
-  if (q) { where.push("instr(search, ?) > 0"); args.push(q); }
+  if (service) { where.push("r.service = ?"); args.push(service); }
+  if (metric) { where.push("r.metric = ?"); args.push(metric); }
+  if (q) { where.push("instr(r.search, ?) > 0"); args.push(q); }
+  if (url.searchParams.has("since")) {
+    const since = parseTs(url.searchParams.get("since"));
+    if (since === null) return json(400, { error: "`since`는 ISO 8601 시각이어야 해요." });
+    where.push("r.ts_kst >= ?"); args.push(toKstIso(since));
+  }
   const w = where.length ? " WHERE " + where.join(" AND ") : "";
-  const [list, count] = await env.DB.batch([
-    env.DB.prepare(`SELECT data, ts_kst FROM records${w} ORDER BY ts_kst DESC, id ASC LIMIT ?`).bind(...args, limit),
-    env.DB.prepare(`SELECT COUNT(*) AS n FROM records${w}`).bind(...args),
-  ]);
-  const records = list.results.map(publicRecord);
-  const res = json(200, {
+  const queries = [
+    env.DB.prepare(`SELECT data, ts_kst FROM records r${w} ORDER BY ts_kst DESC, id LIMIT ?`).bind(...args, limit + (includeTotal ? 0 : 1)),
+  ];
+  if (includeTotal) queries.push(env.DB.prepare(`SELECT COUNT(*) AS n FROM records r${w}`).bind(...args));
+  if (includeLatest) queries.push(env.DB.prepare(`
+    SELECT r.data, r.ts_kst FROM trend_points p JOIN records r ON r.id = p.id AND p.sample_rank = ?
+    ${w} ORDER BY p.ts_kst DESC, p.id`).bind(LATEST_RANK, ...args));
+  const results = await env.DB.batch(queries);
+  const rows = results[0].results;
+  const total = includeTotal ? results[1].results[0].n : null;
+  const records = rows.slice(0, limit).map(publicRecord);
+  return json(200, {
     records,
     count: records.length,
-    total: count.results[0]?.n ?? 0,
+    total,
+    has_more: (total ?? rows.length) > limit,
+    ...(includeLatest ? { latest: results.at(-1).results.map(publicRecord) } : {}),
     limit,
     skipped: 0,
     generated_at: nowKst(),
     timezone: "Asia/Seoul",
   });
-  // D1 읽기량을 아끼려고 같은 주소 응답을 20초만 엣지에 둡니다. 브라우저에는 no-store.
-  const toCache = new Response(res.clone().body, res);
-  toCache.headers.set("Cache-Control", "public, max-age=20");
-  ctx.waitUntil(cache.put(cacheKey, toCache));
-  return res;
+}
+
+async function apiTrends(url, env) {
+  const range = url.searchParams.get("range") ?? "7d";
+  if (!["24h", "7d", "all"].includes(range)) return json(400, { error: "`range`는 24h, 7d, all 중 하나여야 해요." });
+  const now = Date.now(), end = toKstIso(now), day = 86400e3;
+  const since = range === "all" ? null : toKstIso(now - (range === "24h" ? 1 : 7) * day);
+  let minutes = range === "24h" ? 0 : 30;
+  if (range === "all") {
+    const span = await env.DB.prepare(`
+      SELECT (SELECT ts_kst FROM records WHERE ts_kst <= ?1 ORDER BY ts_kst LIMIT 1) AS oldest,
+             (SELECT ts_kst FROM records WHERE ts_kst <= ?1 ORDER BY ts_kst DESC LIMIT 1) AS newest`).bind(end).first();
+    const days = span.oldest ? (Date.parse(span.newest) - Date.parse(span.oldest)) / day : 0;
+    minutes = days <= 14 ? 60 : days <= 60 ? 180 : 360;
+  }
+  // 등급별로 시간 인덱스를 탐색한다. 상한에서는 최신, 시작, 초기화 양끝, 큰 버킷 순으로 보존한다.
+  const minRank = TREND_MINUTES.indexOf(minutes);
+  const ranks = Array.from({ length: LATEST_RANK - minRank + 1 }, (_, i) => minRank + i);
+  const { results } = await env.DB.prepare(`
+    WITH as_of(id) AS MATERIALIZED (
+      -- 미래 시각의 기록이 있는 시리즈도 조회 종료 시각까지의 마지막 값은 포함한다.
+      SELECT (SELECT id FROM records WHERE service = f.service AND metric = f.metric
+        AND COALESCE(note, '') = COALESCE(f.note, '') AND ts_kst BETWEEN ?1 AND ?2
+        ORDER BY ts_kst DESC LIMIT 1)
+      FROM trend_points t JOIN records f ON f.id = t.id WHERE t.sample_rank = ?3 AND t.ts_kst > ?2
+    ), picks AS (
+      SELECT id, ts_kst, sample_rank FROM trend_points
+      WHERE sample_rank IN (${ranks.map(() => "?").join(",")}) AND ts_kst BETWEEN ?1 AND ?2
+        AND id NOT IN (SELECT id FROM as_of WHERE id IS NOT NULL)
+      UNION ALL
+      SELECT r.id, r.ts_kst, ?3 AS sample_rank FROM as_of a JOIN records r ON r.id = a.id
+      ORDER BY sample_rank DESC, ts_kst DESC, id LIMIT ?
+    )
+    SELECT r.id, r.ts_kst, r.data FROM picks p JOIN records r ON r.id = p.id
+    ORDER BY p.sample_rank DESC, p.ts_kst DESC, p.id
+  `).bind(since ?? "", end, LATEST_RANK, ...ranks, MAX_TREND_POINTS + 1).all();
+  const truncated = results.length > MAX_TREND_POINTS;
+  if (truncated) results.pop();
+  results.sort((a, b) => b.ts_kst.localeCompare(a.ts_kst) || a.id - b.id);
+  return json(200, {
+    records: results.map(publicRecord), range, since, bucket_minutes: minutes,
+    count: results.length, limit: MAX_TREND_POINTS, truncated, generated_at: end, timezone: "Asia/Seoul",
+  });
 }
 
 // ---------- 원본 파일 ----------
@@ -354,12 +419,12 @@ async function apiIngest(request, env) {
   }
   const at = nowKst();
   const stmt = env.DB.prepare(
-    "INSERT OR IGNORE INTO records (ts_kst, service, metric, value, unit, reset_at, note, source, data, search, dedupe_key, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT OR IGNORE INTO records (ts_kst, service, metric, value, unit, reset_at, note, source, data, search, dedupe_key, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
   );
   const results = await env.DB.batch(
     rows.map((r) => stmt.bind(r.tsKst, r.service, r.metric, r.value, r.unit, r.resetAt, r.note, r.source, r.dataText, r.search, r.dedupe, at)),
   );
-  const inserted = results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+  const inserted = results.reduce((n, r) => n + r.results.length, 0);
   return json(200, { ok: true, received: rows.length, inserted, duplicates: rows.length - inserted }, { cors: false });
 }
 
@@ -402,7 +467,8 @@ export default {
     try {
       if (method === "GET") {
         if (path === "/" || path === "/index.html") return send(200, INDEX_HTML, "text/html; charset=utf-8");
-        if (path === "/api/records") return await apiRecords(request, env, ctx);
+        if (path === "/api/records") return await cachedRead(request, ctx, () => apiRecords(url, env));
+        if (path === "/api/trends") return await cachedRead(request, ctx, () => apiTrends(url, env));
         if (path === "/api/raw") return (await sessionValid(env, request)) ? await apiRawList(env) : deny();
         if (path === "/api/raw/file") return (await sessionValid(env, request)) ? await apiRawFile(request, env) : deny();
         if (path === "/health" || path === "/api/health") return json(200, { ok: true, time: nowKst() });
