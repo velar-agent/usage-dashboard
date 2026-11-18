@@ -17,7 +17,7 @@
 - `wrangler.toml` — wrangler 로 배포할 때 쓰는 설정
 - `scripts/make-deploy-code.py` — Cloudflare 연결(MCP `execute`)로 올릴 코드를 만들어요
 - `scripts/promote-dev-to-prod.py` — 개발(usage-dashboard-dev)에서 검증한 코드를 운영(usage-dashboard)에 올리기 위한 준비/검증, 그리고 `deploy`(Cloudflare REST API 로 운영 직접 배포, 실패 시 자동 롤백)
-- `scripts/nightly-promote.sh` — 매일 00:00(KST) cron 이 돌리는 러너(git pull → precheck → deploy). `scripts/start-nightly-cron.sh` — 그 스케줄러(supercronic)를 띄우는 멱등 스크립트, `cron/crontab` — 그 스케줄(git 으로 관리)
+- `scripts/nightly-promote.sh` — 매일 00:00(KST) GCE VM 의 시스템 cron 이 돌리는 러너(git pull → precheck → deploy). `scripts/start-nightly-cron.sh`·`cron/crontab` — 예전 box 의 supercronic 스케줄러용(지금은 `FORCE_START=1` 없이는 안 띄움)
 - `scripts/import-local-data.py` — `processed/`, `raw/` 파일을 Worker 로 올려요 (중복은 무시)
 
 ## 다시 배포하는 방법
@@ -91,8 +91,8 @@ python3 worker/scripts/promote-dev-to-prod.py diff
 
 롤백: Cloudflare 대시보드 또는 API에서 Worker `usage-dashboard` 의 이전 배포(버전)로 되돌리면 됩니다. 소스 쪽은 git 이전 커밋이나 `web/server.py.bak-*` 백업을 씁니다. 시크릿은 배포 때 유지되므로 롤백해도 보통 그대로입니다.
 
-## 매일 자정 자동 배포 (box cron)
-매일 00:00(Asia/Seoul)에 box 의 `supercronic` 이 `worker/scripts/nightly-promote.sh` 를 실행해 개발(`usage-dashboard-dev`)에서 검증된 코드를 운영(`usage-dashboard`)에 올립니다. MCP·wrangler 로그인 없이 Cloudflare REST API 를 직접 씁니다. 코드만 올리고 D1 데이터는 복사하지 않으며, 시크릿은 값 없이 `inherit`(Versions API)로 이어받습니다. Versions API 메타에는 허용된 필드만 보내므로 `observability`·logpush 같은 스크립트 설정은 건드리지 않고 기존 설정이 그대로 유지됩니다(수동 MCP 배포 `build` 경로만 `keep_bindings` 를 씁니다). `deploy` 는 `usage-dashboard` 이외의 Worker 는 거부합니다.
+## 매일 자정 자동 배포 (GCE VM cron)
+매일 00:00(Asia/Seoul)에 GCE VM(`token-usage-collector`, box 에서 `ssh gce-collector`)의 시스템 cron 이 `worker/scripts/nightly-promote.sh` 를 실행해 개발(`usage-dashboard-dev`)에서 검증된 코드를 운영(`usage-dashboard`)에 올립니다. MCP·wrangler 로그인 없이 Cloudflare REST API 를 직접 씁니다. 코드만 올리고 D1 데이터는 복사하지 않으며, 시크릿은 값 없이 `inherit`(Versions API)로 이어받습니다. Versions API 메타에는 허용된 필드만 보내므로 `observability`·logpush 같은 스크립트 설정은 건드리지 않고 기존 설정이 그대로 유지됩니다(수동 MCP 배포 `build` 경로만 `keep_bindings` 를 씁니다). `deploy` 는 `usage-dashboard` 이외의 Worker 는 거부합니다.
 
 순서(러너): ① 락(`flock`, 겹침 방지) ② main 브랜치·깨끗한 작업 트리 확인 후 `git pull --ff-only`(HEAD 가 origin/main 과 같아야 함) ③ `precheck` 11개 전부 통과 ④ `deploy`:
 API 로 현재 운영 배포 id 기록 → 개발·운영의 실제 올라가 있는 코드(index.js/html.js)를 읽어 비교 →
@@ -115,24 +115,25 @@ API 로 현재 운영 배포 id 기록 → 개발·운영의 실제 올라가 �
 
 파일 위치(토큰·로그는 repo 밖이고 토큰은 절대 커밋하지 않음)
 - API 토큰: `~/.config/usage-deploy/cf-token` (디렉터리 700, 파일 600). 권한: Workers Scripts Edit + Account Settings Read, 계정 `a12d19c6…`. 환경변수 `CLOUDFLARE_API_TOKEN` 이 있으면 그걸 먼저 씁니다. 값은 로그·출력에 나오지 않습니다.
-- crontab: `worker/cron/crontab` (repo 안) — `0 0 * * * /workspace/usage-dashboard/worker/scripts/nightly-promote.sh` (`TZ`/`CRON_TZ`=Asia/Seoul). 고친 뒤엔 `--restart`. `~/.config/usage-deploy/crontab` 은 사람이 찾기 쉽게 둔 심볼릭 링크일 뿐이고 스크립트는 만들지도 쓰지도 않아요.
+- 스케줄(운영): VM 의 `/etc/cron.d/usage-dashboard-nightly` — `0 0 * * * collector /workspace/usage-dashboard/worker/scripts/nightly-promote.sh` (`CRON_TZ`=Asia/Seoul, VM 시간대도 Asia/Seoul). VM 의 `/workspace/usage-dashboard` 는 GitHub 에서 받은 git 체크아웃이고, 러너가 매번 `git pull --ff-only` 로 최신 main 을 받아요. VM 에는 precheck 용 `node`(v24.22.1, `~/.local/node`, `~/.local/bin/node`)를 설치했어요.
+- `worker/cron/crontab` 과 `start-nightly-cron.sh` 는 예전 box 의 `supercronic` 용이에요. 두 곳에서 배포하지 않도록 `start-nightly-cron.sh` 는 `FORCE_START=1` 없이는 띄우지 않아요(`--status`·`--stop` 은 됨).
 - 러너는 커밋·푸시 전의 변경(스테이징 포함)이 있으면 배포하지 않아요(종료 1).
-- 로그: `~/.local/state/usage-deploy/YYYY-MM-DD.log`(60일 보관), 마지막 결과 `last-run.json`, 스케줄러 `supercronic.log`, `supercronic.pid`
+- 로그(VM): `~/.local/state/usage-deploy/YYYY-MM-DD.log`(60일 보관), 마지막 결과 `last-run.json`
 
+VM 에서 확인·수동 실행 (box 에서):
 ```bash
-S=worker/scripts
-$S/start-nightly-cron.sh --status       # 이 crontab 으로 도는 supercronic 전부 (running pid=… / not running)
-$S/start-nightly-cron.sh                # 안 떠 있으면 시작 (멱등)
-$S/start-nightly-cron.sh --restart      # 재시작 (repo 의 crontab 을 다시 읽음; 예전 ~/.config 경로로 도는 옛 프로세스도 정리)
-$S/start-nightly-cron.sh --stop         # 자동 배포 중지 (이 crontab 의 supercronic 전부)
+ssh gce-collector
+S=/workspace/usage-dashboard/worker/scripts
 $S/nightly-promote.sh --dry-run         # 업로드·롤백만 빼고 전부 수행 (--force: 같아도 계획까지 출력)
 tail -n 40 ~/.local/state/usage-deploy/$(date +%F).log; cat ~/.local/state/usage-deploy/last-run.json
 python3 $S/promote-dev-to-prod.py status    # 운영 최근 배포 목록 (읽기 전용)
+cat /etc/cron.d/usage-dashboard-nightly     # 스케줄
+sudo mv /etc/cron.d/usage-dashboard-nightly /etc/cron.d/usage-dashboard-nightly.disabled   # 일시 중지 (cron 은 이름에 . 이 든 파일을 읽지 않아요. 되돌리려면 다시 mv)
 ```
 
-재시작: box 가 다시 켜지면 supercronic 프로세스는 사라집니다. `~/.bashrc`(맨 위)와 `~/.profile` 에 `start-nightly-cron.sh` 를 부르는 가드를 넣어 두어, 셸이 열릴 때 안 떠 있으면 자동으로 다시 띄웁니다. `supercronic` 바이너리는 `~/.local/bin/supercronic`(v0.2.33, 홈에 있어 재시작 후에도 남음; 한 번은 `/usr/local/bin` 쪽이 재시작에 사라진 적이 있어요. 없으면 https://github.com/aptible/supercronic/releases 에서 받아 그 경로에 넣으세요)를 씁니다. 즉 box 재시작 뒤 **아무 셸도 열리지 않으면 스케줄러가 안 뜹니다**. 자정 시점에 box 가 꺼져 있거나 잠들어 있으면 그날 실행은 건너뛰어요(supercronic 은 놓친 작업을 나중에 돌리지 않음). 로그가 하루 비어 있거나 `last-run.json` 시각이 오래됐다면 위 `--status` 로 확인하세요. cron 은 채팅으로 알림을 보내지 못하므로 결과는 로그·`last-run.json` 으로 확인합니다.
+VM 의 시스템 cron 은 재부팅 뒤에도 그대로 돌아요. cron 은 채팅으로 알림을 보내지 못하므로 결과는 VM 의 로그·`last-run.json` 으로 확인합니다. API 토큰은 box 의 `~/.config/usage-deploy/cf-token` 을 VM 같은 경로에 복사해 두었어요(권한 600). 토큰을 바꾸면 VM 쪽도 바꿔야 해요.
 
-수동 롤백(API): `promote-dev-to-prod.py status` 로 이전 배포의 version id 를 확인한 뒤, 대시보드의 Worker → Deployments 에서 되돌리거나 API `POST /accounts/<acct>/workers/scripts/usage-dashboard/deployments` 에 `{"strategy":"percentage","versions":[{"version_id":"<id>","percentage":100}]}` 를 보냅니다. 자정 배포가 반복해서 같은 코드를 올리지 않게 하려면 먼저 `--stop` 하거나 개발에 되돌릴 코드를 올려 두세요.
+수동 롤백(API): `promote-dev-to-prod.py status` 로 이전 배포의 version id 를 확인한 뒤, 대시보드의 Worker → Deployments 에서 되돌리거나 API `POST /accounts/<acct>/workers/scripts/usage-dashboard/deployments` 에 `{"strategy":"percentage","versions":[{"version_id":"<id>","percentage":100}]}` 를 보냅니다. 자정 배포가 반복해서 같은 코드를 올리지 않게 하려면 먼저 VM 의 자정 cron 을 위처럼 일시 중지하거나 개발에 되돌릴 코드를 올려 두세요.
 
 ## 동작 메모
 - `/api/records` 응답은 같은 주소 기준 엣지에 20초 캐시돼요(D1 읽기량 절약). 새 기록은 최대 20초 뒤에 보여요.

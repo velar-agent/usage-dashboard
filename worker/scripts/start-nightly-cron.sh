@@ -2,6 +2,7 @@
 # supercronic 으로 매일 00:00(Asia/Seoul) nightly-promote.sh 를 돌리는 스케줄러를 (없으면) 띄워요. 여러 번, 동시에 실행해도 안전해요(멱등).
 # crontab 은 repo 의 worker/cron/crontab 을 그대로 써요(이 스크립트가 만들지 않아요). 토큰은 ~/.config/usage-deploy/cf-token (repo 밖).
 # 상태: --status / 중지: --stop / 다시 시작: --restart
+# 운영 자정 배포는 GCE VM 의 시스템 cron 으로 옮겼어요. 여기서 띄우려면(시작·재시작) FORCE_START=1 이 필요해요.
 # pidfile 이 아니라 "이 crontab 으로 도는 supercronic 프로세스 전부"를 기준으로 판단하고, 시작·중지는 flock 으로 직렬화해요.
 set -u
 export TZ=Asia/Seoul
@@ -51,6 +52,13 @@ case "${1:-}" in
   --stop|--restart|"") ;;
   *) echo "usage: $0 [--status|--stop|--restart]" >&2; exit 2 ;;
 esac
+
+# 운영 자정 배포는 GCE VM 의 시스템 cron(/etc/cron.d/usage-dashboard-nightly)이 해요.
+# 두 곳에서 배포하지 않도록, 띄우기(시작·재시작)는 FORCE_START=1 일 때만 해요. --status·--stop 은 그대로 돼요.
+if [[ "${1:-}" != --stop && "${FORCE_START:-}" != 1 ]]; then
+  echo "start-nightly-cron.sh: 자정 배포는 GCE VM 에서 돌아요(worker/README.md 참고). 정말 여기서 띄우려면 FORCE_START=1 로 실행하세요." >&2
+  exit 1
+fi
 
 # 시작·중지는 한 번에 하나만
 exec 8>"$STATE/start.lock"
