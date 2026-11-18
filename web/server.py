@@ -556,7 +556,7 @@ section:first-of-type { margin-top:0; }
 .lim-tb .seg button { height:34px; }
 .lim-list { max-height:none; margin-bottom:var(--sp-2); }
 .lim-list[hidden], #cards[hidden] { display:none; }
-.lim-list td.c-reset b { font-weight:700; }
+.lim-list td.c-reset b { font-weight:400; }
 .lim-list td.c-reset { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .lim-list .c-svc .chip { display:flex; width:max-content; margin-top:2px; }
 .lim-list td { white-space:nowrap; }
@@ -825,7 +825,7 @@ function kp(t) {
 }
 const p2 = n => String(n).padStart(2, "0");
 const tms = v => { const t = Date.parse(v); return Number.isFinite(t) ? t : null; };
-const fmtDT = t => { const k = kp(t); return `${k.mo}/${k.d}(${WD[k.wd]}) ${p2(k.h)}:${p2(k.mi)}`; };
+const fmtDT = t => { const k = kp(t); return `${k.mo}월${k.d}일(${WD[k.wd]}) ${p2(k.h)}:${p2(k.mi)}`; };
 const fmtHM = t => { const k = kp(t); return `${p2(k.h)}:${p2(k.mi)}`; };
 const fmtFull = t => { const k = kp(t); return `${k.y}-${p2(k.mo)}-${p2(k.d)} ${p2(k.h)}:${p2(k.mi)} KST`; };
 function fmtIn(ms) {
@@ -1135,7 +1135,7 @@ function renderLimits(now = Date.now()) {
   if (listMode) {
     setHTML($("limBody"), list.map(v => {
       const r = v.r, n = v.n, st = v.st;
-      const reset = v.rs ? `<b>${esc(fmtDT(v.rs))}</b>` : `—`;
+      const reset = v.rs ? `${esc(fmtDT(v.rs))}` : `—`;
       const txt = v.pct && Number.isFinite(n) ? fmtPct(n) + "%" : fmtVal(r);
       const changed = prevVals.has(v.key) && prevVals.get(v.key) !== txt;
       prevVals.set(v.key, txt);
@@ -1271,11 +1271,15 @@ function buildChartSvg(opts) {
   // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
   const { vis, now, t0, t1, W, H } = opts;
   const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
-  const futureResets = new Map();
-  for (const s of vis) {
-    const reset = tms(s.rows[s.rows.length - 1].reset_at);
-    if (reset !== null && reset > now) futureResets.set(s, reset);
-  }
+  // 시리즈마다 창 안에 있는 서로 다른 초기화 시각 (과거·미래 모두, 점선 세로선).
+  const resetsInWin = vis.map(s => {
+    const seen = new Set();
+    for (const r of s.rows) {
+      const reset = tms(r.reset_at);
+      if (reset !== null && reset >= t0 && reset <= t1) seen.add(reset);
+    }
+    return { s, resets: [...seen].sort((a, b) => a - b) };
+  });
   const inHistory = r => {
     const t = tms(r.ts);
     return t >= t0 && t <= now;
@@ -1289,15 +1293,12 @@ function buildChartSvg(opts) {
   [0, 25, 50, 75, 100].forEach(v => { g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v}%</text>`; });
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.warn)}" y2="${Y(THRESH.warn)}" stroke="var(--warn)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.bad)}" y2="${Y(THRESH.bad)}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
-  let beyondIdx = 0;
-  for (const [s, reset] of futureResets) {
-    if (reset > t1) {
-      const y = m.t + 10 + beyondIdx * 12; beyondIdx++;
-      g += `<text class="endlab" x="${right}" y="${y}" text-anchor="end" style="fill:${s.color}">만기 ${esc(fmtIn(reset - now))}</text>`;
-      continue;
+  // 초기화 점선 세로선: 데이터 경로보다 먼저 그려(=아래에) 둔다.
+  for (const { s, resets } of resetsInWin) {
+    for (const reset of resets) {
+      const x = X(reset);
+      g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + ih}" stroke="${s.color}" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round" opacity=".7"/>`;
     }
-    const x = X(reset);
-    g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + 6}" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round"><title>${esc(s.label)} 초기화 · ${fmtDT(reset)}</title></line>`;
   }
   const maxTicks = Math.max(3, Math.floor(iw / 64));
   const cand = [10 * MIN, 30 * MIN, HR, 3 * HR, 6 * HR, 12 * HR, DAY, 2 * DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY];
@@ -1334,7 +1335,7 @@ function drawChart(card, now, win) {
   const { t0, t1 } = win;
   const vis = ser.filter(s => seriesVisible[s.key]);
   const sig = [W, H, rng, displayedTrend.version, t0, t1,
-    ...vis.map(s => `${s.key}:${tms(s.rows[s.rows.length - 1].reset_at) ?? ""}`)].join("|");
+    ...vis.map(s => `${s.key}:${[...new Set(s.rows.map(r => tms(r.reset_at)).filter(v => v !== null && v >= t0 && v <= t1))].sort((a, b) => a - b).join(",")}`)].join("|");
   if (plot.dataset.sig === sig) return;
   plot.dataset.sig = sig; plot.style.height = H + "px";
   const cur = card.querySelector("[data-cur]");

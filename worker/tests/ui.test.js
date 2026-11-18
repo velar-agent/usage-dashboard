@@ -186,7 +186,7 @@ test("buildChartSvg는 지금 표시·미래 음영 없이 now x가 카드마다
   const services = [
     fakeSeries("codex", NOW - 3 * 86400e3, NOW - 5 * 60e3, NOW + 1 * 86400e3),
     fakeSeries("claude", NOW - 6 * 86400e3, NOW - 2 * 60e3, NOW + 4 * 86400e3),
-    // 창 밖(멀리 있는) 초기화는 우측 '만기 …' 라벨이 되어야 한다.
+    // 창 밖(멀리 있는) 초기화는 그리지 않는다(만기·툴팁 없음).
     fakeSeries("grok", NOW - 2 * 86400e3, NOW - 3 * 60e3, NOW + 30 * 86400e3),
   ];
   const earliest = Math.min(...services.flatMap((s) => s.rows.map((r) => Date.parse(r.ts))));
@@ -204,18 +204,144 @@ test("buildChartSvg는 지금 표시·미래 음영 없이 now x가 카드마다
   // 7일 창 중간의 x: l=36, r=48 이므로 기대값 36 + (W-84)/2.
   assert.equal(nowXs[0], 36 + (W - 36 - 48) / 2, "now x가 창 중앙이어야 해요");
 
-  // 창 안에 있는 초기화는 틱으로, 창 밖은 '만기 …' 라벨로 보인다.
+  // 창 안에 있는 초기화는 점선 세로선(라벨·툴팁 없음)으로, 창 밖은 아무것도 그리지 않는다.
   const inside = buildChartSvg({
     vis: [fakeSeries("a", NOW - 7 * 86400e3, NOW - 60e3, NOW + 2 * 86400e3)],
     now: NOW, t0: win.t0, t1: win.t1, W, H,
   });
-  assert.ok(inside.inner.includes("초기화"), "창 안쪽 초기화 틱이 있어야 해요");
+  assert.equal((inside.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "창 안쪽 초기화 점선 세로선이 하나 있어야 해요");
+  assert.ok(!inside.inner.includes("초기화 ·"), "초기화 점선 세로선에 툴팁 텍스트가 있으면 안 돼요");
+  assert.ok(!inside.inner.includes("<title>"), "초기화 점선 세로선에 <title>이 있으면 안 돼요");
+  assert.ok(!inside.inner.includes("만기"), "차트에 '만기 …' 라벨이 있으면 안 돼요");
+  assert.ok(!inside.inner.includes('y1="20" y2="26"'), "짧은 6px 틱 마커가 있으면 안 돼요");
   const outside = buildChartSvg({
     vis: [fakeSeries("b", NOW - 7 * 86400e3, NOW - 60e3, NOW + 30 * 86400e3)],
     now: NOW, t0: win.t0, t1: win.t1, W, H,
   });
-  assert.ok(outside.inner.includes("만기"), "창 밖 초기화는 '만기 …' 라벨이어야 해요");
-  assert.ok(!outside.inner.includes("초기화 ·"), "창 밖 초기화는 틱이 아니어야 해요");
+  assert.ok(!outside.inner.includes("만기"), "창 밖 초기화는 '만기 …' 라벨이면 안 돼요");
+  assert.ok(!outside.inner.includes("초기화 ·"), "창 밖 초기화는 점선 세로선이 아니어야 해요");
+  assert.ok(!outside.inner.includes("<title>"), "창 밖 초기화에도 <title>이 있으면 안 돼요");
+  assert.equal((outside.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "창 밖 초기화는 점선 세로선이 아니어야 해요");
+});
+
+test("fmtDT는 'M월D일(요일) HH:MM' 형식을 쓴다", () => {
+  const { fn } = makeSandbox();
+  const fmtDT = fn("fmtDT");
+  assert.equal(typeof fmtDT, "function", "fmtDT가 전역 함수로 있어야 해요");
+  assert.equal(fmtDT(Date.parse("2026-11-26T04:25:00+09:00")), "11월26일(목) 04:25");
+  assert.equal(fmtDT(Date.parse("2026-01-05T04:25:00+09:00")), "1월5일(월) 04:25", "월·일 한 자리도 0으로 채우지 않아요");
+  // 요일이 없는 x축 틱 라벨(M/D)은 그대로이다.
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const W = 400, H = 200, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  const out = buildChartSvg({ vis: [fakeSeries("a", NOW - 7 * 86400e3, NOW - 60e3, NOW + 2 * 86400e3)], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.match(out.inner, />\d{1,2}\/\d{1,2}</, "x축 틱 라벨은 M/D 그대로여야 해요");
+});
+
+test("buildChartSvg는 창 안 초기화마다 점선 세로선을 하나씩 그린다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const W = 400, H = 200, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  // 대칭 창은 그대로이다.
+  assert.equal((win.t0 + win.t1) / 2, NOW, "대칭 창이 바뀌면 안 돼요");
+  assert.equal(win.t1 - NOW, NOW - win.t0);
+
+  // 행마다 다른 초기화 시각: 창 안 2개(같은 시각 중복 포함), 창 밖 1개, null 1개.
+  const ser = {
+    key: "rst|weekly_used_pct|", label: "주간A", color: "var(--s1)", dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) }, // 과거, 창 안
+      { ts: KST(NOW - 5 * 86400e3), value: 12, reset_at: KST(NOW + 2 * 86400e3) }, // 미래, 창 안
+      { ts: KST(NOW - 120e3), value: 14, reset_at: KST(NOW + 2 * 86400e3) },        // 같은 시각 중복
+      { ts: KST(NOW - 60e3), value: 18, reset_at: null },                           // 초기화 없음
+      { ts: KST(NOW - 30e3), value: 20, reset_at: KST(NOW + 30 * 86400e3) },        // 창 밖(미래)
+    ],
+  };
+  const out = buildChartSvg({ vis: [ser], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  const dotted = out.inner.match(/stroke-dasharray="1\.5 3"/g) || [];
+  assert.equal(dotted.length, 2, "서로 다른 창 안 초기화마다 점선 세로선이 하나씩 있어야 해요");
+  assert.ok(!out.inner.includes("초기화 ·"), "초기화 점선 세로선에 툴팁 텍스트가 있으면 안 돼요");
+  assert.ok(!out.inner.includes("<title>"), "초기화 점선 세로선에 <title>이 있으면 안 돼요");
+  assert.ok(!out.inner.includes("만기"), "창 밖 초기화 '만기 …' 라벨이 있으면 안 돼요");
+  assert.ok(out.inner.includes('stroke="var(--s1)" stroke-width="1.5"'), "점선 세로선은 시리즈 색이어야 해요");
+  assert.ok(out.inner.includes('y1="20" y2="176"'), "점선 세로선은 plot 전체 높이여야 해요");
+  assert.ok(out.inner.includes('stroke-linecap="round" opacity=".7"'), "점선 세로선 스타일이 바뀌면 안 돼요");
+  assert.ok(!out.inner.includes('y1="20" y2="26"'), "짧은 6px 틱 마커가 있으면 안 돼요");
+  assert.ok(out.inner.indexOf('stroke-dasharray="1.5 3"') < out.inner.indexOf("<path"), "점선 세로선은 데이터 경로보다 먼저(=아래에) 그려야 해요");
+  assert.ok(!out.inner.includes("지금"), "SVG에 '지금' 표시가 있으면 안 돼요");
+  assert.ok(!out.inner.includes("지금</text>"), "SVG에 '지금' 라벨이 있으면 안 돼요");
+
+  // 두 시리즈가 같은 시각을 공유하면 시리즈마다 한 줄씩이다.
+  const ser2 = { ...ser, key: "rst2|weekly_used_pct|", label: "주간B", color: "var(--s2)" };
+  const both = buildChartSvg({ vis: [ser, ser2], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal((both.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 4, "시리즈마다 창 안 초기화 선을 그려야 해요");
+
+  // 숨긴(범례 토글) 시리즈의 선은 그리지 않는다.
+  const onlyB = buildChartSvg({ vis: [ser2], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal((onlyB.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "보이는 시리즈 선을 그려야 해요");
+  assert.ok(onlyB.inner.includes('stroke="var(--s2)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "보이는 시리즈 색으로 그려야 해요");
+  assert.ok(!onlyB.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "숨긴 시리즈 선을 그리면 안 돼요");
+  assert.ok(!onlyB.inner.includes("<title>"), "숨긴 시리즈 검사에서도 <title>이 있으면 안 돼요");
+
+  // 창 밖 과거 초기화는 선·만기 라벨 모두 아니다.
+  const old = {
+    key: "old|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 30 * 86400e3) },
+      { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW - 30 * 86400e3) },
+    ],
+  };
+  const outOld = buildChartSvg({ vis: [old], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal((outOld.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "창 밖 초기화는 점선 세로선이 아니어야 해요");
+  assert.ok(!outOld.inner.includes("만기"), "과거 초기화는 '만기 …' 라벨이 아니어야 해요");
+});
+
+test("drawChart는 초기화 집합이 바뀌면 다시 그린다 (버전은 그대로)", () => {
+  const { sandbox, fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const drawChart = fn("drawChart");
+  const W = 400, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  const rows = [
+    { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 2 * 86400e3) },
+    { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW + 2 * 86400e3) },
+  ];
+  vm.runInContext(
+    `displayedTrend = { range: "7d", version: 1, series: new Map([["codex", [{ key: "rst|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "", rows: ${JSON.stringify(rows)} }]]]) };
+     seriesVisible["rst|weekly_used_pct|"] = true;`,
+    sandbox
+  );
+  const plot = makeEl("div"); plot.clientWidth = W;
+  const cur = makeEl("span");
+  const card = { dataset: { svc: "codex" }, clientWidth: W,
+    querySelector: (sel) => (sel === "[data-plot]" ? plot : sel === "[data-cur]" ? cur : makeEl("div")) };
+
+  drawChart(card, NOW, win);
+  const sig1 = plot.dataset.sig, inner1 = plot.innerHTML;
+  assert.ok(sig1, "처음 drawChart는 sig를 남겨야 해요");
+  assert.equal((inner1.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "창 안 초기화 점선 세로선이 하나여야 해요");
+
+  // 같은 데이터면 sig가 같아 다시 그리지 않는다.
+  drawChart(card, NOW, win);
+  assert.equal(plot.dataset.sig, sig1, "같은 데이터에서는 sig가 같아야 해요");
+  assert.equal(plot.innerHTML, inner1, "같은 데이터에서는 다시 그리지 않아야 해요");
+
+  // 버전을 그대로 두고 초기화 집합만 바꿔도 다시 그려야 한다.
+  vm.runInContext(
+    `displayedTrend.series.get("codex")[0].rows.push({ ts: ${JSON.stringify(KST(NOW - 10e3))}, value: 22, reset_at: ${JSON.stringify(KST(NOW + 4 * 86400e3))} });`,
+    sandbox
+  );
+  drawChart(card, NOW, win);
+  assert.notEqual(plot.dataset.sig, sig1, "초기화 집합이 바뀌면 sig가 바뀌어야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "새 초기화 선이 추가되어야 해요");
+
+  // 범례 토글로 시리즈를 숨기면 선이 사라진다.
+  vm.runInContext(`seriesVisible["rst|weekly_used_pct|"] = false;`, sandbox);
+  drawChart(card, NOW, win);
+  assert.ok(plot.innerHTML.includes("범례에서 선택"), `숨긴 시리즈는 빈 안내만 남아야 해요: ${plot.innerHTML.slice(0, 80)}`);
 });
 
 test("정상 헤더는 실시간 수집 중과 카운트다운을 보이고 분 전이 없다", () => {
@@ -452,7 +578,8 @@ test("목록 표는 기간 경과·기록 열 없이 초기화 절대시각만 �
   assert.equal(resetCells.length, 2, "초기화 셀이 행마다 하나씩 있어야 해요");
   for (const cell of resetCells) {
     assert.ok(!cell.includes("후"), `초기화 셀에 상대 문구가 있으면 안 돼요: ${cell}`);
-    assert.match(cell, /<b>\d{1,2}\/\d{1,2}\([일월화수목금토]\)\s\d{2}:\d{2}<\/b>/, `초기화 셀은 절대시각이어야 해요: ${cell}`);
+    assert.match(cell, /\d{1,2}월\d{1,2}일\([일월화수목금토]\) \d{2}:\d{2}/, `초기화 셀은 절대시각이어야 해요: ${cell}`);
+    assert.ok(!cell.includes("<b>"), `초기화 셀은 <b>로 감싸면 안 돼요: ${cell}`);
   }
   // 지연 칩은 이상 항목에만 붙는다.
   vm.runInContext(
@@ -463,6 +590,63 @@ test("목록 표는 기간 경과·기록 열 없이 초기화 절대시각만 �
   vm.runInContext(`renderLimits(${NOW});`, sandbox);
   const delayedBody = sandbox.__byId.get("limBody")?.innerHTML ?? "";
   assert.ok(delayedBody.includes("수집 지연"), "지연 항목 행에 지연 칩이 있어야 해요");
+});
+
+test("한도 목록 초기화 셀은 볼드이면 안 된다", () => {
+  const { sandbox, html } = makeSandbox();
+  // CSS: td.c-reset b 에 font-weight:700 이 있으면 안 된다.
+  const cResetRule = html.match(/\.lim-list td\.c-reset b\s*\{([^}]*)\}/);
+  assert.ok(cResetRule, ".lim-list td.c-reset b 규칙을 찾지 못했어요");
+  assert.ok(!/font-weight\s*:\s*700/.test(cResetRule[1]), "한도 목록 초기화 셀은 font-weight:700 이면 안 돼요");
+  assert.ok(/font-weight\s*:\s*400/.test(cResetRule[1]), "한도 목록 초기화 셀은 font-weight:400 이어야 해요");
+  // 카드 쪽 .reset b 는 그대로 두어도 되고, 표 마크업은 <b>로 감싸면 안 된다.
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     LF.v = "list";
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 42, note: "Pro", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 3 * 86400e3))} },
+     ];
+     latestByService = new Map([["codex", ${NOW - 2 * 60e3}]]);`,
+    sandbox
+  );
+  vm.runInContext(`renderLimits(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("limBody")?.innerHTML ?? "";
+  const resetCells = [...body.matchAll(/<td class="c-reset"[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+  assert.equal(resetCells.length, 1, "초기화 셀이 하나 있어야 해요");
+  assert.ok(!resetCells[0].includes("<b>"), `초기화 셀은 <b>로 감싸면 안 돼요: ${resetCells[0]}`);
+  assert.match(resetCells[0], /\d{1,2}월\d{1,2}일\([일월화수목금토]\) \d{2}:\d{2}/, `초기화 셀은 절대시각이어야 해요: ${resetCells[0]}`);
+});
+
+test("차트는 창 밖 초기화 만기 라벨·툴팁을 보이지 않고 창 안 점선만 남긴다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const W = 400, H = 200;
+  // 모든 범위에서 창 밖 초기화가 만기·title 없이 그려지지 않는다.
+  for (const range of ["24h", "7d", "all"]) {
+    const earliest = NOW - 7 * 86400e3;
+    const win = chartWindow(range, NOW, earliest);
+    const beyond = buildChartSvg({
+      vis: [fakeSeries("b", NOW - 7 * 86400e3, NOW - 60e3, NOW + 30 * 86400e3)],
+      now: NOW, t0: win.t0, t1: win.t1, W, H,
+    });
+    assert.ok(!beyond.inner.includes("만기"), `${range}: 창 밖 초기화는 '만기 …' 라벨이면 안 돼요`);
+    assert.ok(!beyond.inner.includes("<title>"), `${range}: 초기화 점선 세로선에 <title>이 있으면 안 돼요`);
+    assert.ok(!beyond.inner.includes("초기화 ·"), `${range}: 초기화 점선 세로선에 툴팁 텍스트가 있으면 안 돼요`);
+    // 끝값 % 라벨과 축 틱 라벨은 그대로 남는다.
+    assert.ok(beyond.inner.includes("endlab"), `${range}: 끝값 % 라벨(endlab)이 있어야 해요`);
+    assert.ok(beyond.inner.includes("0%"), `${range}: % 축 틱 라벨이 있어야 해요`);
+  }
+  // 창 안 초기화는 점선 세로선이 그대로 있다.
+  const earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  const inside = buildChartSvg({
+    vis: [fakeSeries("a", NOW - 7 * 86400e3, NOW - 60e3, NOW + 2 * 86400e3)],
+    now: NOW, t0: win.t0, t1: win.t1, W, H,
+  });
+  assert.equal((inside.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "창 안 초기화 점선 세로선이 하나 있어야 해요");
+  assert.ok(!inside.inner.includes("<title>"), "창 안 초기화 점선 세로선에 <title>이 있으면 안 돼요");
+  assert.ok(!inside.inner.includes("만기"), "창 안 차트에 '만기 …' 라벨이 있으면 안 돼요");
 });
 
 test("html 동기화와 스크립트 구문이 유지된다", () => {
