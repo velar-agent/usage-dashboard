@@ -121,7 +121,7 @@ function makeSandbox() {
 }
 
 // 가짜 서비스: 첫 기록 시각과 초기화 시각이 카드마다 다르다 (구 코드는 카드마다 창이 달랐다).
-// 12:03:08 로 두면 다음 슬롯(12:05)까지 '다음 수집 1:52' 가 된다.
+// 12:03:08 로 두면 다음 슬롯(12:05)까지 1:52 남는다.
 const NOW = Date.parse("2026-11-19T12:03:08+09:00");
 const KST = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 19) + "+09:00";
 function fakeSeries(svc, firstMs, lastMs, resetMs) {
@@ -239,7 +239,7 @@ test("fmtDT는 'M월D일(요일) HH:MM' 형식을 쓴다", () => {
   assert.match(out.inner, />\d{1,2}\/\d{1,2}</, "x축 틱 라벨은 M/D 그대로여야 해요");
 });
 
-test("buildChartSvg는 창 안 초기화마다 점선 세로선을 하나씩 그린다", () => {
+test("buildChartSvg는 미래 창 안 초기화마다 점선 세로선을 하나씩 그린다", () => {
   const { fn } = makeSandbox();
   const chartWindow = fn("chartWindow");
   const buildChartSvg = fn("buildChartSvg");
@@ -249,11 +249,11 @@ test("buildChartSvg는 창 안 초기화마다 점선 세로선을 하나씩 그
   assert.equal((win.t0 + win.t1) / 2, NOW, "대칭 창이 바뀌면 안 돼요");
   assert.equal(win.t1 - NOW, NOW - win.t0);
 
-  // 행마다 다른 초기화 시각: 창 안 2개(같은 시각 중복 포함), 창 밖 1개, null 1개.
+  // 행마다 다른 초기화 시각: 미래 창 안 1개(같은 시각 중복 포함), 과거 창 안 1개(그리지 않음), 창 밖 1개, null 1개.
   const ser = {
     key: "rst|weekly_used_pct|", label: "주간A", color: "var(--s1)", dash: "",
     rows: [
-      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) }, // 과거, 창 안
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) }, // 과거, 창 안 (그리지 않음)
       { ts: KST(NOW - 5 * 86400e3), value: 12, reset_at: KST(NOW + 2 * 86400e3) }, // 미래, 창 안
       { ts: KST(NOW - 120e3), value: 14, reset_at: KST(NOW + 2 * 86400e3) },        // 같은 시각 중복
       { ts: KST(NOW - 60e3), value: 18, reset_at: null },                           // 초기화 없음
@@ -262,7 +262,7 @@ test("buildChartSvg는 창 안 초기화마다 점선 세로선을 하나씩 그
   };
   const out = buildChartSvg({ vis: [ser], now: NOW, t0: win.t0, t1: win.t1, W, H });
   const dotted = out.inner.match(/stroke-dasharray="1\.5 3"/g) || [];
-  assert.equal(dotted.length, 2, "서로 다른 창 안 초기화마다 점선 세로선이 하나씩 있어야 해요");
+  assert.equal(dotted.length, 1, "서로 다른 미래 창 안 초기화만 점선 세로선이 있어야 해요");
   assert.ok(!out.inner.includes("초기화 ·"), "초기화 점선 세로선에 툴팁 텍스트가 있으면 안 돼요");
   assert.ok(!out.inner.includes("<title>"), "초기화 점선 세로선에 <title>이 있으면 안 돼요");
   assert.ok(!out.inner.includes("만기"), "창 밖 초기화 '만기 …' 라벨이 있으면 안 돼요");
@@ -277,11 +277,11 @@ test("buildChartSvg는 창 안 초기화마다 점선 세로선을 하나씩 그
   // 두 시리즈가 같은 시각을 공유하면 시리즈마다 한 줄씩이다.
   const ser2 = { ...ser, key: "rst2|weekly_used_pct|", label: "주간B", color: "var(--s2)" };
   const both = buildChartSvg({ vis: [ser, ser2], now: NOW, t0: win.t0, t1: win.t1, W, H });
-  assert.equal((both.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 4, "시리즈마다 창 안 초기화 선을 그려야 해요");
+  assert.equal((both.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "시리즈마다 미래 창 안 초기화 선을 그려야 해요");
 
   // 숨긴(범례 토글) 시리즈의 선은 그리지 않는다.
   const onlyB = buildChartSvg({ vis: [ser2], now: NOW, t0: win.t0, t1: win.t1, W, H });
-  assert.equal((onlyB.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "보이는 시리즈 선을 그려야 해요");
+  assert.equal((onlyB.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "보이는 시리즈 선을 그려야 해요");
   assert.ok(onlyB.inner.includes('stroke="var(--s2)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "보이는 시리즈 색으로 그려야 해요");
   assert.ok(!onlyB.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "숨긴 시리즈 선을 그리면 안 돼요");
   assert.ok(!onlyB.inner.includes("<title>"), "숨긴 시리즈 검사에서도 <title>이 있으면 안 돼요");
@@ -297,6 +297,32 @@ test("buildChartSvg는 창 안 초기화마다 점선 세로선을 하나씩 그
   const outOld = buildChartSvg({ vis: [old], now: NOW, t0: win.t0, t1: win.t1, W, H });
   assert.equal((outOld.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "창 밖 초기화는 점선 세로선이 아니어야 해요");
   assert.ok(!outOld.inner.includes("만기"), "과거 초기화는 '만기 …' 라벨이 아니어야 해요");
+});
+
+test("buildChartSvg는 창 안 과거 초기화를 그리지 않고 미래만 그린다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const W = 400, H = 200, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  // 창 안 과거만: 점선 없음.
+  const pastOnly = buildChartSvg({
+    vis: [{
+      key: "past|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "",
+      rows: [
+        { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) },
+        { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW - 3 * 86400e3) },
+      ],
+    }],
+    now: NOW, t0: win.t0, t1: win.t1, W, H,
+  });
+  assert.equal((pastOnly.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "창 안 과거 초기화는 점선 세로선이 아니어야 해요");
+  // 창 안 미래는 점선 하나.
+  const future = buildChartSvg({
+    vis: [fakeSeries("a", NOW - 7 * 86400e3, NOW - 60e3, NOW + 2 * 86400e3)],
+    now: NOW, t0: win.t0, t1: win.t1, W, H,
+  });
+  assert.equal((future.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "창 안 미래 초기화 점선 세로선이 하나 있어야 해요");
 });
 
 test("drawChart는 초기화 집합이 바뀌면 다시 그린다 (버전은 그대로)", () => {
@@ -344,8 +370,37 @@ test("drawChart는 초기화 집합이 바뀌면 다시 그린다 (버전은 그
   assert.ok(plot.innerHTML.includes("범례에서 선택"), `숨긴 시리즈는 빈 안내만 남아야 해요: ${plot.innerHTML.slice(0, 80)}`);
 });
 
-test("정상 헤더는 실시간 수집 중과 카운트다운을 보이고 분 전이 없다", () => {
+test("drawChart sig는 now가 미래 초기화를 지나면 바뀐다", () => {
   const { sandbox, fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const drawChart = fn("drawChart");
+  const W = 400, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  const resetMs = NOW + 2 * 86400e3;
+  const rows = [
+    { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(resetMs) },
+    { ts: KST(NOW - 60e3), value: 20, reset_at: KST(resetMs) },
+  ];
+  vm.runInContext(
+    `displayedTrend = { range: "7d", version: 1, series: new Map([["codex", [{ key: "rst|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "", rows: ${JSON.stringify(rows)} }]]]) };
+     seriesVisible["rst|weekly_used_pct|"] = true;`,
+    sandbox
+  );
+  const plot = makeEl("div"); plot.clientWidth = W;
+  const cur = makeEl("span");
+  const card = { dataset: { svc: "codex" }, clientWidth: W,
+    querySelector: (sel) => (sel === "[data-plot]" ? plot : sel === "[data-cur]" ? cur : makeEl("div")) };
+  drawChart(card, NOW, win);
+  const sigBefore = plot.dataset.sig;
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "미래 초기화 선이 하나여야 해요");
+  // now가 초기화를 지난 뒤에는 미래 집합이 비어 sig가 바뀌고 선이 사라진다 (같은 창이어도).
+  drawChart(card, resetMs + 1000, win);
+  assert.notEqual(plot.dataset.sig, sigBefore, "now가 초기화를 지나면 sig가 바뀌어야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "지난 초기화 선은 사라져야 해요");
+});
+
+test("정상 헤더는 실시간 수집 중만 보이고 분 전이 없다", () => {
+  const { sandbox, html } = makeSandbox();
   vm.runInContext(
     `loaded = true; fetchFailed = false; skipped = 0;
      RECORDS = [
@@ -357,24 +412,11 @@ test("정상 헤더는 실시간 수집 중과 카운트다운을 보이고 분 
   );
   vm.runInContext(`renderCollection(${NOW});`, sandbox);
   const statusLabel = sandbox.__byId.get("statusLabel")?.textContent ?? "";
-  const nextCollect = sandbox.__byId.get("nextCollect")?.textContent ?? "";
-  const headerText = `${statusLabel} ${nextCollect}`;
-  assert.ok(!headerText.includes("분 전"), `정상 헤더에 '분 전'이 있으면 안 돼요: ${headerText}`);
+  assert.ok(!statusLabel.includes("분 전"), `정상 헤더에 '분 전'이 있으면 안 돼요: ${statusLabel}`);
   assert.ok(statusLabel.includes("실시간 수집 중"), `정상 헤더는 '실시간 수집 중'이어야 해요: ${statusLabel}`);
-  assert.match(nextCollect, /^다음 수집 \d+:\d{2}$/, `카운트다운 형식 오류: ${nextCollect}`);
-  // 슬롯 뒤 30초는 '수집 중…' 로 보이고, 그 뒤부터 다음 슬롯까지 카운트다운한다.
-  const countdownText = fn("countdownText");
-  const slot = Date.parse("2026-11-19T10:05:00+09:00");
-  assert.equal(countdownText(slot), "수집 중…", "슬롯 경계에서는 수집 중이어야 해요");
-  assert.equal(countdownText(slot + 1000), "수집 중…", "슬롯 직후 30초는 수집 중이어야 해요");
-  assert.equal(countdownText(slot + 10_000), "수집 중…", "슬롯 뒤 10초도 수집 중이어야 해요");
-  assert.equal(countdownText(slot + 29_000), "수집 중…", "슬롯 뒤 29초도 수집 중이어야 해요");
-  assert.equal(countdownText(slot + 29_999), "수집 중…", "슬롯 뒤 30초 직전까지 수집 중이어야 해요");
-  assert.equal(countdownText(slot + 30_000), "다음 수집 4:30", "30초가 지나면 카운트다운이어야 해요");
-  assert.equal(countdownText(slot + 31_000), "다음 수집 4:29", "30초 뒤 카운트다운이 이어져야 해요");
-  assert.equal(countdownText(slot + 45_000), "다음 수집 4:15", "슬롯 뒤 45초 카운트다운이 이어져야 해요");
-  assert.equal(countdownText(slot + 299_000), "다음 수집 0:01", "다음 슬롯 직전 카운트다운이어야 해요");
-  assert.equal(countdownText(slot + 300_000), "수집 중…", "다음 슬롯 경계에서는 다시 수집 중이어야 해요");
+  // 슬롯 타이머는 표시 없이 동작한다: 서버가 내리는 껍질에 표시용 span이 없다.
+  assert.ok(html.includes('id="statusLabel"'), "헤더 라벨 마크업이 있어야 해요");
+  assert.ok(!html.includes('class="cnt"'), "표시용 span이 있으면 안 돼요");
 });
 
 test("지연 헤더는 N분째를 보인다", () => {
@@ -431,8 +473,8 @@ test("3개 이상 지연이면 헤더는 짧아지고 2개까지는 긴 형식�
   assert.ok(String(renderBanner).includes("분째"), "배너 상세에 분째가 있어야 해요");
 });
 
-test("갱신 실패면 다음 수집 카운트다운을 숨기고 tick도 다시 채우지 않는다", () => {
-  const { sandbox, fn } = makeSandbox();
+test("갱신 실패 헤더는 에러 라벨만 보인다", () => {
+  const { sandbox, html } = makeSandbox();
   vm.runInContext(
     `loaded = true; fetchFailed = true; skipped = 0;
      RECORDS = [
@@ -442,23 +484,12 @@ test("갱신 실패면 다음 수집 카운트다운을 숨기고 tick도 다시
     sandbox
   );
   vm.runInContext(`renderCollection(${NOW});`, sandbox);
-  const nextCollect = sandbox.__byId.get("nextCollect");
-  assert.equal(nextCollect.textContent, "", `fetchFailed면 카운트다운이 비어야 해요: ${nextCollect.textContent}`);
-  assert.equal(nextCollect.hidden, true, "fetchFailed면 카운트다운이 hidden이어야 해요");
-  // 1초 tick도 숨김을 유지해야 한다 (다시 채우면 1초 뒤에 다시 보인다).
-  nextCollect.textContent = "SENTINEL";
-  nextCollect.hidden = false;
-  fn("tickCountdown")();
-  assert.equal(nextCollect.textContent, "", "tick도 fetchFailed면 카운트다운을 채우지 않아야 해요");
-  assert.equal(nextCollect.hidden, true, "tick 후에도 hidden이어야 해요");
-  // 복구되면 다시 보인다 (NOW=12:03:08 이면 다음 슬롯까지 1:52).
-  vm.runInContext(`fetchFailed = false;`, sandbox);
-  vm.runInContext(`renderCollection(${NOW});`, sandbox);
-  assert.equal(nextCollect.textContent, "다음 수집 1:52", `복구 후 카운트다운: ${nextCollect.textContent}`);
-  assert.equal(nextCollect.hidden, false, "복구 후에는 hidden이 아니어야 해요");
+  const statusLabel = sandbox.__byId.get("statusLabel")?.textContent ?? "";
+  assert.equal(statusLabel, "갱신 실패", `갱신 실패 헤더 라벨: ${statusLabel}`);
+  assert.ok(!html.includes('class="cnt"'), "실패 헤더에도 표시용 span이 있으면 안 돼요");
 });
 
-test("숨긴 탭에서는 슬롯·재시도·카운트다운이 네트워크를 내지 않는다", async () => {
+test("숨긴 탭에서는 슬롯·재시도가 네트워크를 내지 않는다", async () => {
   const { sandbox, fn } = makeSandbox();
   let fetchCalls = 0;
   sandbox.fetch = () => { fetchCalls++; return new Promise(() => {}); };
@@ -495,15 +526,6 @@ test("숨긴 탭에서는 슬롯·재시도·카운트다운이 네트워크를 
   fetchCalls = 0;
   await withTimeout(retryCb());
   assert.equal(fetchCalls, 0, "숨김 재시도 콜백은 fetch를 내지 않아야 해요");
-  // 카운트다운: 숨김이면 텍스트를 바꾸지 않는다.
-  const nextCollect = sandbox.__byId.get("nextCollect");
-  nextCollect.textContent = "SENTINEL";
-  fn("tickCountdown")();
-  assert.equal(nextCollect.textContent, "SENTINEL", "숨김에서는 카운트다운 텍스트를 바꾸지 않아야 해요");
-  // 보이면 다시 카운트다운한다.
-  sandbox.document.hidden = false;
-  fn("tickCountdown")();
-  assert.match(nextCollect.textContent, /^(수집 중…|다음 수집 \d+:\d{2})$/, `보이면 카운트다운: ${nextCollect.textContent}`);
   sandbox.document.hidden = false;
 });
 
@@ -527,7 +549,6 @@ test("재시도 상한은 slot+45s 시도 뒤 2분이다", async () => {
   assert.ok(captured, "2분 직전이면 재시도를 잡아야 해요");
   assert.equal(vm.runInContext("SLOT_RETRY_MS", sandbox), 15_000, "SLOT_RETRY_MS 상수");
   assert.equal(vm.runInContext("SLOT_RETRY_CAP", sandbox), 120_000, "SLOT_RETRY_CAP 상수");
-  assert.equal(vm.runInContext("COUNTDOWN_COLLECTING_MS", sandbox), 30_000, "수집 중 구간 상수");
 });
 
 test("탭이 다시 보이면 슬롯 타이머를 다시 잡는다", () => {
@@ -615,6 +636,23 @@ test("한도 목록 초기화 셀은 볼드이면 안 된다", () => {
   assert.equal(resetCells.length, 1, "초기화 셀이 하나 있어야 해요");
   assert.ok(!resetCells[0].includes("<b>"), `초기화 셀은 <b>로 감싸면 안 돼요: ${resetCells[0]}`);
   assert.match(resetCells[0], /\d{1,2}월\d{1,2}일\([일월화수목금토]\) \d{2}:\d{2}/, `초기화 셀은 절대시각이어야 해요: ${resetCells[0]}`);
+});
+
+test("한도 목록 메모 열은 내용 너비로 제한된다", () => {
+  const { html } = makeSandbox();
+  // 한도 목록(.lim-list)의 메모 열은 내용에 맞게 좁게, 다른 열이 나머지를 받는다.
+  const memoRule = html.match(/\.lim-list td\.c-note[^\{]*\{([^}]*)\}/);
+  assert.ok(memoRule, ".lim-list td.c-note 규칙을 찾지 못했어요");
+  assert.ok(/width\s*:\s*1%/.test(memoRule[1]), `메모 열은 width:1% 로 내용 너비여야 해요: ${memoRule[1]}`);
+  assert.ok(/max-width\s*:\s*180px/.test(memoRule[1]), `메모 열은 max-width:180px 로 제한돼야 해요: ${memoRule[1]}`);
+  assert.ok(/white-space\s*:\s*normal/.test(memoRule[1]), "메모 열은 줄바꿈 가능해야 해요");
+  assert.ok(/overflow-wrap\s*:\s*anywhere/.test(memoRule[1]) || /word-break\s*:\s*keep-all/.test(memoRule[1]), "메모 열은 긴 단어가 줄바꿈 가능해야 해요");
+  // 헤더도 같은 너비 규칙을 받아야 실제 표에서 좁아진다.
+  assert.ok(/\.lim-list th:nth-child\(3\)/.test(html), "메모 헤더(.lim-list th:nth-child(3))에 너비 규칙이 있어야 해요");
+  // 기록 표의 메모 열은 건드리지 않는다(260px 유지).
+  assert.ok(/td\.c-note\s*\{[^}]*max-width\s*:\s*260px/.test(html), "기록 표 메모 열(260px)은 그대로여야 해요");
+  // 모바일에서는 카드 레이아웃으로 풀린다.
+  assert.ok(/@media\s*\(max-width:719px\)[\s\S]*\.lim-list td\.c-note[^\{]*\{[^}]*max-width\s*:\s*none/.test(html), "모바일에서는 메모 열 상한이 없어야 해요");
 });
 
 test("차트는 창 밖 초기화 만기 라벨·툴팁을 보이지 않고 창 안 점선만 남긴다", () => {

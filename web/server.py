@@ -405,7 +405,6 @@ section:first-of-type { margin-top:0; }
 .status[data-s="stale"] { background:var(--warn-bg); border-color:transparent; color:var(--warn); }
 .status[data-s="error"], .status[data-s="stale"][data-late="2"] { background:var(--bad-bg); border-color:transparent; color:var(--bad); }
 .status:is([data-s="stale"], [data-s="error"]) .dot { background:currentColor; }
-.status .cnt { color:var(--muted); font-variant-numeric:tabular-nums; margin-left:var(--sp-1); }
 @keyframes pulse { 50% { opacity:.45; } }
 @keyframes valueFlash { 0% { background:var(--accent-soft); } 100% { background:transparent; } }
 .flash { animation:valueFlash 1.2s ease-out; border-radius:6px; }
@@ -560,7 +559,7 @@ section:first-of-type { margin-top:0; }
 .lim-list td.c-reset { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .lim-list .c-svc .chip { display:flex; width:max-content; margin-top:2px; }
 .lim-list td { white-space:nowrap; }
-.lim-list td.c-note { white-space:normal; }
+.lim-list th:nth-child(3), .lim-list td.c-note { width:1%; max-width:180px; white-space:normal; overflow-wrap:anywhere; word-break:keep-all; }
 .lim-list td.c-val { width:25%; }
 .lim-list .usage { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-1) var(--sp-2); }
 .lim-list .usage-value { min-width:5ch; }
@@ -614,6 +613,7 @@ a.raw-link { color:var(--accent); font-size:12px; margin-left:6px; text-decorati
   td.c-note:empty,td.c-src:empty { display:none; }
   .more { border:0; }
   .lim-list td { white-space:normal; overflow-wrap:anywhere; }
+  .lim-list th:nth-child(3), .lim-list td.c-note { width:auto; max-width:none; }
   .lim-list td.c-val { grid-column:1 / -1; grid-row:2; width:auto; text-align:left; }
   .lim-list .usage { display:grid; gap:var(--sp-1); }
   .lim-list .meter { min-width:0; }
@@ -697,7 +697,7 @@ td.c-time[data-dup] { color:var(--muted); }
       <span class="tz" title="모든 시각은 한국 표준시(UTC+9)">KST</span>
     </div>
     <div class="status" id="status" data-s="loading" role="status" aria-live="polite" aria-atomic="true" title="모든 시각은 한국 표준시(KST, UTC+9)">
-      <span class="dot" aria-hidden="true"></span><span id="statusLabel">불러오는 중…</span><span class="cnt" id="nextCollect" aria-live="off"></span>
+      <span class="dot" aria-hidden="true"></span><span id="statusLabel">불러오는 중…</span>
     </div>
     <button class="icon-btn" id="btnRefresh" type="button" aria-label="지금 새로고침" title="지금 새로고침">
       <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/></svg></button>
@@ -803,11 +803,9 @@ const AGE_OK = 2 * COLLECT_MS;     // 10분까지 정상, 그보다 오래면 �
 const AGE_WARN = 3 * COLLECT_MS;   // 3회 연속 누락(15분)부터 주의 칩
 const AGE_BAD = 6 * COLLECT_MS;    // 6회 연속 누락(30분)부터 위험 칩
 const REFRESH_MS = 30e3;           // 구형 폴링 상수 (진행 표시줄 길이 기준 유지)
-const TICK_MS = 30e3;              // 지연 재평가 간격 (카운트다운은 1초 타이머가 표시)
+const TICK_MS = 30e3;              // 지연 재평가 간격
 const COLLECT_HINT = `${COLLECT_MS / 60e3}분마다 수집`;
 const REFRESH_INTERVAL = `${REFRESH_MS / 1000}초`;
-const COUNTDOWN_MS = 1000;         // 카운트다운 초당 틱
-const COUNTDOWN_COLLECTING_MS = 30e3; // 슬롯 뒤 이만큼은 '수집 중…'
 const SLOT_LOAD_DELAY = 45e3;      // 슬롯 뒤 이만큼 지나서 새 기록을 받는다
 const SLOT_RETRY_MS = 15e3;        // 슬롯 뒤 새 기록이 없으면 이 간격으로 재시도
 const SLOT_RETRY_CAP = 2 * 60e3;   // 재시도 상한 (slot+45s 시도 뒤 2분, 그 뒤는 다음 슬롯까지 대기)
@@ -953,33 +951,12 @@ function urgency(a, b) {
 }
 const ageLevel = ms => ms >= AGE_BAD ? 2 : ms >= AGE_WARN ? 1 : 0;
 
-/* ---------- KST 5분 슬롯 카운트다운 (순수 함수로 떼어 둔다) ---------- */
+/* ---------- KST 5분 슬롯 ---------- */
 function nextSlotMs(now) {
   // KST는 UTC+9 라 고정 오프셋으로 벽시계를 얻는다 (서머타임 없음).
   const SLOT = COLLECT_MS, OFF = 9 * 3600e3;
   const kst = now + OFF;
   return Math.ceil(kst / SLOT) * SLOT - OFF;
-}
-function countdownText(now) {
-  const ms = nextSlotMs(now) - now;
-  const elapsed = ms <= 0 ? 0 : COLLECT_MS - ms;
-  if (elapsed < COUNTDOWN_COLLECTING_MS) return "수집 중…";
-  const s = Math.ceil(ms / 1000), m = Math.floor(s / 60);
-  return `다음 수집 ${m}:${p2(s % 60)}`;
-}
-function tickCountdown() {
-  // 1초 타이머는 이 텍스트 노드만 바꾼다 (전체 다시그리기 없음).
-  const el = $("nextCollect");
-  if (!el) return;
-  if (document.hidden) return;
-  if (fetchFailed) {
-    if (el.textContent !== "") el.textContent = "";
-    el.hidden = true;
-    return;
-  }
-  el.hidden = false;
-  const txt = countdownText(Date.now());
-  if (el.textContent !== txt) el.textContent = txt;
 }
 
 /* ---------- 헤더 상태 / 배너 ---------- */
@@ -1006,20 +983,10 @@ function renderCollection(now) {
   else if (!latest) { state = "waiting"; label = RECORDS.length ? "수집 시각 없음" : "첫 수집 대기"; }
   else { state = "ok"; label = "실시간 수집 중"; }
 
-  const el = $("status"), statusLabel = $("statusLabel"), time = $("nextCollect");
+  const el = $("status"), statusLabel = $("statusLabel");
   el.dataset.s = state;
   el.dataset.late = oldest?.level ?? 0;
   if (statusLabel.textContent !== label) statusLabel.textContent = label;
-  if (time) {
-    if (fetchFailed) {
-      if (time.textContent !== "") time.textContent = "";
-      time.hidden = true;
-    } else {
-      time.hidden = false;
-      const cnt = countdownText(now);
-      if (time.textContent !== cnt) time.textContent = cnt;
-    }
-  }
   renderBanner(services.filter(s => s.delayed), latest);
 }
 const BANNER_ICON = { error:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></svg>',
@@ -1271,12 +1238,12 @@ function buildChartSvg(opts) {
   // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
   const { vis, now, t0, t1, W, H } = opts;
   const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
-  // 시리즈마다 창 안에 있는 서로 다른 초기화 시각 (과거·미래 모두, 점선 세로선).
+  // 시리즈마다 미래·창 안에 있는 서로 다른 초기화 시각 (점선 세로선).
   const resetsInWin = vis.map(s => {
     const seen = new Set();
     for (const r of s.rows) {
       const reset = tms(r.reset_at);
-      if (reset !== null && reset >= t0 && reset <= t1) seen.add(reset);
+      if (reset !== null && reset > now && reset <= t1) seen.add(reset);
     }
     return { s, resets: [...seen].sort((a, b) => a - b) };
   });
@@ -1335,7 +1302,7 @@ function drawChart(card, now, win) {
   const { t0, t1 } = win;
   const vis = ser.filter(s => seriesVisible[s.key]);
   const sig = [W, H, rng, displayedTrend.version, t0, t1,
-    ...vis.map(s => `${s.key}:${[...new Set(s.rows.map(r => tms(r.reset_at)).filter(v => v !== null && v >= t0 && v <= t1))].sort((a, b) => a - b).join(",")}`)].join("|");
+    ...vis.map(s => `${s.key}:${[...new Set(s.rows.map(r => tms(r.reset_at)).filter(v => v !== null && v > now && v <= t1))].sort((a, b) => a - b).join(",")}`)].join("|");
   if (plot.dataset.sig === sig) return;
   plot.dataset.sig = sig; plot.style.height = H + "px";
   const cur = card.querySelector("[data-cur]");
@@ -1694,8 +1661,6 @@ async function slotMaybeRetry() {
     await slotMaybeRetry();
   }, SLOT_RETRY_MS);
 }
-tickCountdown();
-setInterval(tickCountdown, COUNTDOWN_MS);
 setInterval(tick, TICK_MS);
 renderAll();
 load();
