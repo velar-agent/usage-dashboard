@@ -1290,3 +1290,161 @@ test("리셋 일정 달관은 요일 헤더와 월 제목과 네비 버튼을 �
   }
   assert.ok(body.includes('cal-grid'), "달력 그리드가 렌더링되어야 해요");
 });
+
+test("filterSeriesByKeys는 빈 키면 전체이고 부분집합과 모르는 키를 처리한다", () => {
+  const { fn } = makeSandbox();
+  const filterSeriesByKeys = fn("filterSeriesByKeys");
+  assert.equal(typeof filterSeriesByKeys, "function", "filterSeriesByKeys가 전역 함수로 있어야 해요");
+  const rows = [
+    { service: "codex", metric: "weekly_used_pct", note: "Pro" },
+    { service: "codex", metric: "weekly_used_pct", note: "" },
+    { service: "claude", metric: "weekly_used_pct", note: "" },
+    { service: "claude", metric: "session_used_pct", note: "" },
+  ];
+  // 빈 키는 전체이다
+  assert.deepEqual(filterSeriesByKeys(rows, []), rows, "빈 키는 전체를 돌려줘야 해요");
+  assert.deepEqual(filterSeriesByKeys(rows), rows, "키가 없으면 전체를 돌려줘야 해요");
+  assert.deepEqual(filterSeriesByKeys(rows, null), rows, "null 키는 전체를 돌려줘야 해요");
+  // 부분집합이다
+  const one = filterSeriesByKeys(rows, ["codex|weekly_used_pct|Pro"]);
+  assert.equal(one.length, 1, "선택한 한 개만 남아야 해요");
+  assert.equal(one[0].note, "Pro");
+  const two = filterSeriesByKeys(rows, ["codex|weekly_used_pct|Pro", "claude|session_used_pct|"]);
+  assert.equal(two.length, 2, "선택한 두 개만 남아야 해요");
+  assert.deepEqual(two.map(r => `${r.service}|${r.metric}|${r.note}`), ["codex|weekly_used_pct|Pro", "claude|session_used_pct|"]);
+  // 모르는 키는 무시한다
+  const withUnknown = filterSeriesByKeys(rows, ["codex|weekly_used_pct|Pro", "unknown|weekly_used_pct|"]);
+  assert.equal(withUnknown.length, 1, "모르는 키는 무시하고 아는 키만 남겨야 해요");
+  assert.equal(withUnknown[0].service, "codex");
+  const unknownOnly = filterSeriesByKeys(rows, ["unknown|weekly_used_pct|"]);
+  assert.deepEqual(unknownOnly, [], "모르는 키만 있으면 빈 목록이어야 해요");
+  // service|metric|note 키는 메모를 구분한다
+  const emptyNote = filterSeriesByKeys(rows, ["codex|weekly_used_pct|"]);
+  assert.equal(emptyNote.length, 1, "메모가 빈 같은 서비스·지표만 남아야 해요");
+  assert.equal(emptyNote[0].note, "");
+  const proNote = filterSeriesByKeys(rows, ["codex|weekly_used_pct|Pro"]);
+  assert.equal(proNote.length, 1, "메모가 Pro인 같은 서비스·지표만 남아야 해요");
+  assert.equal(proNote[0].note, "Pro");
+  assert.notEqual(emptyNote[0].note, proNote[0].note, "메모가 다른 행을 구분해야 해요");
+  // viewOf 래퍼도 같은 키로 걸린다
+  const wrapped = rows.map(r => ({ r, key: `${r.service}|${r.metric}|${r.note}` }));
+  const wrappedOne = filterSeriesByKeys(wrapped, ["claude|weekly_used_pct|"]);
+  assert.equal(wrappedOne.length, 1, "래퍼 행도 키로 걸려야 해요");
+  assert.equal(wrappedOne[0].r.service, "claude");
+});
+
+test("리셋 일정 툴바와 한도 필터가 함께 있다", () => {
+  const { html } = makeSandbox();
+  // 달력 툴바는 s-calendar 안에 sec-h와 calBody 사이에 있다
+  assert.ok(html.includes('id="calToolbar"'), "달력 툴바 식별자가 있어야 해요");
+  assert.ok(html.includes('id="calSeriesL"'), "달력 필터 라벨 식별자가 있어야 해요");
+  assert.ok(html.includes('id="calSeries"'), "달력 필터 드롭다운 식별자가 있어야 해요");
+  assert.ok(html.includes("서비스 · 지표 · 메모"), "달력 필터 라벨 문구가 있어야 해요");
+  const calSection = html.slice(html.indexOf('id="s-calendar"'), html.indexOf('id="s-trends"'));
+  assert.ok(calSection.includes('id="calToolbar"'), "달력 툴바는 s-calendar 섹션 안에 있어야 해요");
+  assert.ok(calSection.includes('id="calSeries"'), "달력 필터는 s-calendar 섹션 안에 있어야 해요");
+  assert.ok(calSection.includes("서비스 · 지표 · 메모"), "달력 툴바 라벨은 s-calendar 안에 있어야 해요");
+  assert.ok(calSection.indexOf('id="calToolbar"') < calSection.indexOf('id="calBody"'), "달력 툴바는 calBody 앞에 있어야 해요");
+  assert.ok(calSection.indexOf('id="calToolbar"') > calSection.indexOf('sec-h'), "달력 툴바는 sec-h 뒤에 있어야 해요");
+  assert.ok(/class="toolbar lim-tb" id="calToolbar"/.test(calSection), "달력 툴바는 toolbar lim-tb 클래스를 써야 해요");
+  assert.ok(/id="calSeries"[^>]*data-all="모든 한도"/.test(calSection), "달력 필터는 모든 한도를 써야 해요");
+  assert.ok(/id="calSeries"[^>]*data-st="cal"/.test(calSection), "달력 필터는 data-st cal이어야 해요");
+  // 한도 필터는 그대로 있다
+  assert.ok(html.includes('id="lSeries"'), "한도 필터 식별자가 그대로 있어야 해요");
+  assert.ok(html.includes('id="limToolbar"'), "한도 툴바 식별자가 그대로 있어야 해요");
+  assert.ok(html.includes('id="lSeriesL"'), "한도 필터 라벨 식별자가 그대로 있어야 해요");
+  assert.ok(/id="lSeries"[^>]*data-all="모든 한도"/.test(html), "한도 필터는 모든 한도를 그대로 써야 해요");
+  // CF 저장 키와 saveCF가 스크립트에 있다
+  assert.ok(html.includes("calFilter"), "달력 필터 저장 키가 스크립트에 있어야 해요");
+  assert.ok(html.includes("CF"), "CF 상태가 스크립트에 있어야 해요");
+  assert.ok(html.includes("saveCF"), "saveCF가 스크립트에 있어야 해요");
+  assert.ok(html.includes("filterSeriesByKeys"), "filterSeriesByKeys가 스크립트에 있어야 해요");
+  // 페이지 스크립트는 여전히 구문이 맞는다
+  const scripts = extractScripts(html);
+  assert.ok(scripts.length >= 2, "인라인 스크립트를 찾지 못했어요");
+  for (let i = 0; i < scripts.length; i++) {
+    assert.doesNotThrow(() => new Function(scripts[i]), `스크립트 #${i + 1} 구문 오류`);
+  }
+});
+
+test("CF는 LF와 독립적인 상태이고 calFilter로 저장된다", () => {
+  const { sandbox, html } = makeSandbox();
+  const CF = vm.runInContext("CF", sandbox);
+  const LF = vm.runInContext("LF", sandbox);
+  assert.ok(CF && typeof CF === "object", "CF 상태가 있어야 해요");
+  assert.ok(Array.isArray(CF.k), "CF.k는 배열이어야 해요");
+  assert.ok(LF && typeof LF === "object", "LF 상태가 그대로 있어야 해요");
+  assert.ok(Array.isArray(LF.k), "LF.k는 배열이어야 해요");
+  assert.notEqual(CF, LF, "CF와 LF는 다른 객체여야 해요");
+  // 한쪽을 바꾸면 다른 쪽은 그대로이다
+  const jsonOf = (expr) => vm.runInContext(`JSON.stringify(${expr})`, sandbox);
+  vm.runInContext(`CF.k = ["codex|weekly_used_pct|Pro"];`, sandbox);
+  assert.equal(jsonOf("CF.k"), JSON.stringify(["codex|weekly_used_pct|Pro"]));
+  assert.equal(jsonOf("LF.k"), JSON.stringify([]), "CF를 바꾸면 LF는 그대로여야 해요");
+  vm.runInContext(`LF.k = ["claude|weekly_used_pct|"];`, sandbox);
+  assert.equal(jsonOf("LF.k"), JSON.stringify(["claude|weekly_used_pct|"]));
+  assert.equal(jsonOf("CF.k"), JSON.stringify(["codex|weekly_used_pct|Pro"]), "LF를 바꾸면 CF는 그대로여야 해요");
+  // 저장 키 형식이 limFilter와 같은 패턴이다
+  assert.ok(/localStorage\.getItem\("calFilter"\)/.test(html), "calFilter로 불러와야 해요");
+  assert.ok(/localStorage\.setItem\("calFilter"/.test(html), "calFilter로 저장해야 해요");
+  assert.ok(/Array\.isArray\(CF\.k\)/.test(html), "CF.k는 Array.isArray로 지켜야 해요");
+  assert.ok(/localStorage\.getItem\("limFilter"\)/.test(html), "limFilter 패턴은 그대로여야 해요");
+});
+
+test("renderCalendar는 CF 필터로 달력을 좁힌다", () => {
+  const { sandbox } = makeSandbox();
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 42, note: "Pro", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 2 * 86400e3))} },
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "claude", metric: "weekly_used_pct", value: 10, note: "", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 86400e3))} },
+     ];
+     latestByService = new Map([["codex", ${NOW - 2 * 60e3}], ["claude", ${NOW - 2 * 60e3}]]);
+     CF.k = ["codex|weekly_used_pct|Pro"];
+     calCursor = null;`,
+    sandbox
+  );
+  vm.runInContext(`renderCalendar(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(body.includes("Codex"), "필터로 고른 Codex가 달력에 있어야 해요");
+  assert.ok(!body.includes("Claude"), "필터에서 빠진 Claude는 달력에 없어야 해요");
+  assert.equal(sandbox.__byId.get("calToolbar")?.hidden, false, "데이터가 있으면 달력 툴바는 보여야 해요");
+  // 필터를 풀면 둘 다 보인다
+  vm.runInContext(`CF.k = []; renderCalendar(${NOW});`, sandbox);
+  const allBody = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(allBody.includes("Codex") && allBody.includes("Claude"), "빈 필터는 전체를 보여야 해요");
+});
+
+test("renderCalendar는 필터 결과가 없으면 조건 문구를 보이고 툴바는 유지한다", () => {
+  const { sandbox } = makeSandbox();
+  // claude는 미래 초기화가 없고 codex만 미래이다. claude만 고르면 결과가 없다.
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 42, note: "Pro", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 2 * 86400e3))} },
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "claude", metric: "weekly_used_pct", value: 10, note: "", unit: "%", reset_at: ${JSON.stringify(KST(NOW - 86400e3))} },
+     ];
+     latestByService = new Map([["codex", ${NOW - 2 * 60e3}], ["claude", ${NOW - 2 * 60e3}]]);
+     CF.k = ["claude|weekly_used_pct|"];
+     calCursor = null;`,
+    sandbox
+  );
+  vm.runInContext(`renderCalendar(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(body.includes("조건에 맞는 리셋 일정이 없어요"), `필터 빈 결과 문구가 있어야 해요: ${body.slice(0, 120)}`);
+  assert.ok(body.includes("chart-empty"), "빈 결과는 chart-empty 스타일이어야 해요");
+  assert.equal(sandbox.__byId.get("calToolbar")?.hidden, false, "필터 빈 결과에서도 툴바는 보여야 해요");
+  // 필터 없이 미래 초기화가 없으면 원래 문구이다 (미래가 있는 codex를 빼면 결과가 없다)
+  vm.runInContext(
+    `CF.k = []; RECORDS = RECORDS.filter(r => r.service === "claude"); renderCalendar(${NOW});`,
+    sandbox
+  );
+  const noFuture = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(noFuture.includes("표시할 리셋 일정이 없어요"), `필터 없이 미래가 없으면 원래 문구여야 해요: ${noFuture.slice(0, 120)}`);
+  assert.ok(!noFuture.includes("조건에 맞는 리셋 일정이 없어요"), "필터 없이 미래가 없으면 조건 문구가 없어야 해요");
+  // 데이터가 없으면 툴바는 숨는다
+  vm.runInContext(`RECORDS = []; renderCalendar(${NOW});`, sandbox);
+  assert.equal(sandbox.__byId.get("calToolbar")?.hidden, true, "기록이 없으면 달력 툴바는 숨겨야 해요");
+  vm.runInContext(`loaded = false; RECORDS = [{ ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 1, note: "", unit: "%" }]; renderCalendar(${NOW});`, sandbox);
+  assert.equal(sandbox.__byId.get("calToolbar")?.hidden, true, "아직 불러오지 않았으면 달력 툴바는 숨겨야 해요");
+});

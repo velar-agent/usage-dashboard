@@ -761,12 +761,15 @@ td.c-time[data-dup] { color:var(--muted); }
 
   <section id="s-calendar" aria-labelledby="h-calendar">
     <div class="sec-h">
-      <div><h2 class="t-h2" id="h-calendar">리셋 일정</h2><p class="sub">미래 초기화만 KST 달력으로 보여 줘요</p></div>
+      <div><h2 class="t-h2" id="h-calendar">리셋 일정</h2><p class="sub" id="calSub">미래 초기화만 KST 달력으로 보여 줘요</p></div>
       <div class="seg" role="group" aria-label="월 이동">
         <button type="button" id="calPrev">이전 달</button>
         <button type="button" id="calNext">다음 달</button>
         <button type="button" id="calToday">오늘</button>
       </div>
+    </div>
+    <div class="toolbar lim-tb" id="calToolbar" hidden>
+      <div class="field"><span class="flabel" id="calSeriesL">서비스 · 지표 · 메모</span><details class="msel" id="calSeries" data-k="k" data-st="cal" data-all="모든 한도"><summary aria-labelledby="calSeriesL"><span class="msel-t">모든 한도</span></summary><div class="msel-p" role="group" aria-labelledby="calSeriesL"></div></details></div>
     </div>
     <div id="calBody"></div>
   </section>
@@ -933,9 +936,12 @@ let loaded = false, fetchFailed = false, lastOkAt = null, skipped = 0, hasMoreRe
 const LF = (() => { try { return JSON.parse(localStorage.getItem("limFilter") || "{}") || {}; } catch (e) { return {}; } })();
 LF.k = Array.isArray(LF.k) ? LF.k : []; delete LF.s; delete LF.m;
 const saveLF = () => { try { localStorage.setItem("limFilter", JSON.stringify(LF)); } catch (e) {} };
+const CF = (() => { try { return JSON.parse(localStorage.getItem("calFilter") || "{}") || {}; } catch (e) { return {}; } })();
+CF.k = Array.isArray(CF.k) ? CF.k : [];
+const saveCF = () => { try { localStorage.setItem("calFilter", JSON.stringify(CF)); } catch (e) {} };
 // 서비스 · 지표 · 메모 체크박스 드롭다운: 선택 없음 = 전체. 서비스 줄을 누르면 그 서비스 전체 선택/해제
 const serLabel = r => `${svcName(r.service)} · ${metricLabel(r.metric)}${r.note ? " · " + r.note : ""}`;
-function fillSeries(el, rows) {
+function fillSeries(el, rows, st = LF) {
   const panel = el.querySelector(".msel-p");
   const items = rows.map(r => ({ k: serKey(r), r })).sort((a, b) => svcName(a.r.service).localeCompare(svcName(b.r.service)) || metricLabel(a.r.metric).localeCompare(metricLabel(b.r.metric)) || (a.r.note || "").localeCompare(b.r.note || ""));
   const keys = items.map(x => x.k), sig = keys.join("\u0001");
@@ -948,7 +954,7 @@ function fillSeries(el, rows) {
     }
     panel.innerHTML = html;
   }
-  const sel = LF.k.filter(k => keys.includes(k));
+  const sel = (Array.isArray(st && st.k) ? st.k : []).filter(k => keys.includes(k));
   panel.querySelectorAll("input[value]").forEach(i => { i.checked = sel.includes(i.value); });
   panel.querySelectorAll("input[data-svc]").forEach(i => { const sub = [...panel.querySelectorAll("input[value]")].filter(x => x.dataset.s === i.dataset.svc); const n = sub.filter(x => x.checked).length; i.checked = n > 0 && n === sub.length; i.indeterminate = n > 0 && n < sub.length; });
   panel.querySelector("input[data-all]").checked = !sel.length;
@@ -970,6 +976,16 @@ function latestSeries() {
   const m = new Map();
   for (const r of RECORDS) { const k = serKey(r); if (!m.has(k)) m.set(k, r); }
   return [...m.values()];
+}
+function filterSeriesByKeys(rows, keys) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!Array.isArray(keys) || keys.length === 0) return list.slice();
+  const wanted = new Set(keys);
+  return list.filter(row => {
+    if (!row) return false;
+    const k = typeof row.key === "string" ? row.key : serKey(row.r || row);
+    return wanted.has(k);
+  });
 }
 function viewOf(r, now) {
   const n = num(r.value), pct = isPctRec(r), ts = tms(r.ts), rs = tms(r.reset_at);
@@ -1354,18 +1370,31 @@ function calendarMonth(year, month, entries, now) {
 function renderCalendar(now = Date.now()) {
   const root = $("calBody");
   if (!root) return;
+  const calSub = $("calSub"), calToolbar = $("calToolbar"), calSeries = $("calSeries");
+  const calSubText = filtered => { if (calSub) calSub.textContent = filtered ? "미래 초기화만 KST 달력으로 보여 줘요 · 필터 적용 중" : "미래 초기화만 KST 달력으로 보여 줘요"; };
   if (!loaded) {
+    if (calToolbar) calToolbar.hidden = true;
+    calSubText(false);
     root.innerHTML = `<div class="chart-empty" style="min-height:140px"><div>리셋 일정을 불러오는 중이에요</div></div>`;
     return;
   }
   if (!RECORDS.length) {
+    if (calToolbar) calToolbar.hidden = true;
+    calSubText(false);
     root.innerHTML = `<div class="chart-empty" style="min-height:140px"><div>표시할 리셋 일정이 없어요</div></div>`;
     return;
   }
-  const seriesList = latestSeries().map(r => viewOf(r, now));
+  if (calToolbar) calToolbar.hidden = false;
+  const all = latestSeries();
+  const sel = calSeries ? fillSeries(calSeries, all, CF) : CF.k.filter(k => all.some(r => serKey(r) === k));
+  const filtered = sel.length > 0;
+  const seriesList = filterSeriesByKeys(all.map(r => viewOf(r, now)), sel);
   const entries = calendarEntries(seriesList, now);
+  calSubText(filtered);
   if (!entries.length) {
-    root.innerHTML = `<div class="chart-empty" style="min-height:140px"><div>표시할 리셋 일정이 없어요</div></div>`;
+    root.innerHTML = filtered
+      ? `<div class="chart-empty" style="min-height:140px"><div>조건에 맞는 리셋 일정이 없어요</div></div>`
+      : `<div class="chart-empty" style="min-height:140px"><div>표시할 리셋 일정이 없어요</div></div>`;
     return;
   }
   if (!calCursor) {
@@ -1715,13 +1744,13 @@ applyTheme((() => { try { const t = localStorage.getItem("tu-theme"); return t =
 function syncView() { document.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.view === (LF.v === "list" ? "list" : "card")))); }
 document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { LF.v = b.dataset.view; saveLF(); renderLimits(); });
 document.querySelectorAll(".msel").forEach(el => el.addEventListener("change", ev => {
-  const i = ev.target, k = el.dataset.k;
-  if (i.dataset.all) LF[k] = [];
+  const i = ev.target, k = el.dataset.k || "k", isCal = el.dataset.st === "cal", st = isCal ? CF : LF;
+  if (i.dataset.all) st[k] = [];
   else {
     if (i.dataset.svc) el.querySelectorAll("input[value]").forEach(x => { if (x.dataset.s === i.dataset.svc) x.checked = i.checked; });
-    LF[k] = [...el.querySelectorAll("input[value]:checked")].map(x => x.value);
+    st[k] = [...el.querySelectorAll("input[value]:checked")].map(x => x.value);
   }
-  saveLF(); renderLimits();
+  if (isCal) { saveCF(); renderCalendar(); } else { saveLF(); renderLimits(); }
 }));
 document.addEventListener("click", ev => document.querySelectorAll(".msel[open]").forEach(el => { if (!el.contains(ev.target)) el.open = false; }));
 document.addEventListener("keydown", ev => { if (ev.key === "Escape") document.querySelectorAll(".msel[open]").forEach(el => { el.open = false; el.querySelector("summary").focus(); }); });
