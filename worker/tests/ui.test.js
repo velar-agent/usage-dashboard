@@ -467,7 +467,8 @@ test("drawChart는 최신 기록 초기화가 바뀌면 다시 그린다 (버전
   drawChart(card, NOW, win);
   const sig1 = plot.dataset.sig, inner1 = plot.innerHTML;
   assert.ok(sig1, "처음 drawChart는 sig를 남겨야 해요");
-  assert.equal((inner1.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "창 안 초기화 점선 세로선이 하나여야 해요");
+  assert.equal((inner1.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length, 1, "창 안 초기화 점선 세로선이 하나여야 해요");
+  assert.equal((inner1.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length, 1, "주간 -7일 선이 하나여야 해요");
 
   // 같은 데이터면 sig가 같아 다시 그리지 않는다.
   drawChart(card, NOW, win);
@@ -491,7 +492,8 @@ test("drawChart는 최신 기록 초기화가 바뀌면 다시 그린다 (버전
   );
   drawChart(card, NOW, win);
   assert.notEqual(plot.dataset.sig, sig1, "최신 기록 초기화가 바뀌면 sig가 바뀌어야 해요");
-  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "초기화 선은 최신 기록의 하나만 남아야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length, 1, "초기화 선은 최신 기록의 하나만 남아야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length, 1, "주간 -7일 선은 최신 기록의 하나만 남아야 해요");
   assert.notEqual(plot.innerHTML, innerBeforeLatestPush, "최신 기록 초기화가 바뀌면 선 위치가 바뀌어야 해요");
 
   // 범례 토글로 시리즈를 숨기면 선이 사라진다.
@@ -522,7 +524,8 @@ test("drawChart sig는 now가 미래 초기화를 지나면 바뀐다", () => {
     querySelector: (sel) => (sel === "[data-plot]" ? plot : sel === "[data-cur]" ? cur : makeEl("div")) };
   drawChart(card, NOW, win);
   const sigBefore = plot.dataset.sig;
-  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "미래 초기화 선이 하나여야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length, 1, "미래 초기화 선이 하나여야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length, 1, "주간 -7일 선이 하나여야 해요");
   // now가 초기화를 지난 뒤에는 최신 기록의 미래 초기화가 비어 sig가 바뀌고 선이 사라진다 (같은 창이어도).
   drawChart(card, resetMs + 1000, win);
   assert.notEqual(plot.dataset.sig, sigBefore, "now가 초기화를 지나면 sig가 바뀌어야 해요");
@@ -981,7 +984,163 @@ test("drawChart는 창 확장에 따라 다시 그려진다", () => {
   drawChart(card, NOW, broadWin);
   const sigBroad = plot.dataset.sig;
   assert.notEqual(sigBroad, sigNarrow, "창이 바뀌면 sig가 바뀌어야 해요");
-  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "넓은 창에서는 6일 뒤 초기화가 그려져야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length, 1, "넓은 창에서는 6일 뒤 초기화가 그려져야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length, 1, "넓은 창에서는 -7일 선이 그려져야 해요");
+});
+
+test("한도 목록 1·2열은 내용 너비로 좁히고 사용률 열이 남는다", () => {
+  const { html } = makeSandbox();
+  assert.ok(/\.lim-list th:nth-child\(1\)[^\{]*\{[^}]*width\s*:\s*1%/.test(html), "1열 헤더는 width:1% 로 내용 너비여야 해요");
+  assert.ok(/\.lim-list td\.c-svc[^\{]*\{[^}]*width\s*:\s*1%/.test(html), "1열 셀(td.c-svc)은 width:1% 여야 해요");
+  assert.ok(/\.lim-list th:nth-child\(2\)[^\{]*\{[^}]*width\s*:\s*1%/.test(html), "2열 헤더는 width:1% 여야 해요");
+  assert.ok(/\.lim-list td:nth-child\(2\)[^\{]*\{[^}]*width\s*:\s*1%/.test(html), "2열 셀(td:nth-child(2))은 width:1% 여야 해요");
+  assert.ok(/\.lim-list th:nth-child\(1\)[^\{]*\{[^}]*white-space\s*:\s*nowrap/.test(html), "1열은 nowrap 으로 내용 너비여야 해요");
+  assert.ok(/\.lim-list td\.c-svc[^\{]*\{[^}]*white-space\s*:\s*nowrap/.test(html), "1열 셀은 nowrap 이어야 해요");
+  assert.ok(/\.lim-list td:nth-child\(2\)[^\{]*\{[^}]*white-space\s*:\s*nowrap/.test(html), "2열 셀은 nowrap 이어야 해요");
+  assert.ok(!/\.lim-list td\.c-val\s*\{[^}]*width\s*:\s*25%/.test(html), "사용률 열은 width:25% 면 안 돼요");
+  assert.ok(/\.lim-list td\.c-val\s*\{[^}]*width\s*:\s*auto/.test(html), "사용률 열은 width:auto 로 유연 열이어야 해요");
+  assert.ok(/\.lim-list th:nth-child\(4\)[^\{]*\{[^}]*width\s*:\s*auto/.test(html), "사용률 헤더도 width:auto 여야 해요");
+  assert.ok(/@media\s*\(max-width:719px\)[\s\S]*\.lim-list th:nth-child\(1\)[^\{]*\{[^}]*width\s*:\s*auto/.test(html), "모바일에서는 1열 헤더 width:auto 여야 해요");
+  assert.ok(/@media\s*\(max-width:719px\)[\s\S]*\.lim-list td\.c-svc[^\{]*\{[^}]*width\s*:\s*auto/.test(html), "모바일에서는 1열 셀 width:auto 여야 해요");
+  assert.ok(/@media\s*\(max-width:719px\)[\s\S]*\.lim-list th:nth-child\(2\)[^\{]*\{[^}]*width\s*:\s*auto/.test(html), "모바일에서는 2열 헤더 width:auto 여야 해요");
+  assert.ok(/@media\s*\(max-width:719px\)[\s\S]*\.lim-list td:nth-child\(2\)[^\{]*\{[^}]*width\s*:\s*auto/.test(html), "모바일에서는 2열 셀 width:auto 여야 해요");
+});
+
+test("최신 기록값 0이면 미래 초기화로 창을 넓히지 않는다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const latestFutureReset = fn("latestFutureReset");
+  const DAY = 86400e3, W = 400, H = 200;
+  const mk = (svc, latestValue, resetMs, firstAgo = 6 * DAY) => ({
+    key: `${svc}|weekly_used_pct|`,
+    label: "주간",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - firstAgo), value: 10, reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latestValue, reset_at: KST(resetMs) },
+    ],
+  });
+  const resetCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length;
+  const weekCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length;
+  const win7 = chartWindow("7d", NOW, NOW - 7 * DAY);
+  // 0인 시리즈(muse): 창 안 미래 초기화라도 선이 없다.
+  const zero = mk("muse", 0, NOW + 2 * DAY);
+  assert.equal(latestFutureReset(zero, NOW), null, "최신 0이면 latestFutureReset은 null 이야");
+  const outZero = buildChartSvg({ vis: [zero], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outZero.inner), 0, "최신 0이면 초기화 선이 없어야 해요");
+  assert.equal(weekCount(outZero.inner), 0, "최신 0이면 -7일 선도 없어야 해요");
+  assert.equal((outZero.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "최신 0이면 점선이 전혀 없어야 해요");
+  // 7인 시리즈(codex): 같은 초기화에서 선이 있다.
+  const seven = mk("codex", 7, NOW + 2 * DAY);
+  assert.equal(latestFutureReset(seven, NOW), NOW + 2 * DAY, "최신 7이면 미래 초기화를 돌려줘야 해요");
+  const outSeven = buildChartSvg({ vis: [seven], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outSeven.inner), 1, "최신 7이면 초기화 선이 하나 있어야 해요");
+  assert.equal(weekCount(outSeven.inner), 1, "최신 7이면 -7일 선이 하나 있어야 해요");
+  // all 창 farthestReset: 0은 창을 넓히지 않고 7은 넓힌다.
+  const earliest = NOW - 4 * DAY, resetFar = NOW + 6 * DAY;
+  const zeroFar = mk("muse", 0, resetFar, 4 * DAY);
+  const sevenFar = mk("codex", 7, resetFar, 4 * DAY);
+  const farZero = latestFutureReset(zeroFar, NOW);
+  const farSeven = latestFutureReset(sevenFar, NOW);
+  assert.equal(farZero, null, "0인 farthest는 null 이야");
+  assert.equal(farSeven, resetFar, "7인 farthest는 그 값이야");
+  const winZero = chartWindow("all", NOW, earliest, farZero);
+  assert.equal(winZero.t0, earliest, "0이면 창 t0는 earliest 그대로");
+  assert.equal(winZero.t1, NOW + 4 * DAY, "0이면 창 t1은 대칭 4일 그대로");
+  const winSeven = chartWindow("all", NOW, earliest, farSeven);
+  assert.equal(winSeven.t0, NOW - 6 * DAY, "7이면 창 t0는 farthest 기준");
+  assert.equal(winSeven.t1, NOW + 6 * DAY, "7이면 창 t1은 farthest 기준");
+  // num() 경계: null·빈 문자열은 0이 아니다 (Number(null)===0 과 다르다).
+  const nullLatest = mk("codex", null, NOW + 2 * DAY);
+  assert.equal(latestFutureReset(nullLatest, NOW), NOW + 2 * DAY, "null은 0이 아니어서 선이 있어야 해요");
+});
+
+test("주간 시리즈는 7d·all에서 -7일 선을 함께 그린다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const DAY = 86400e3, W = 400, H = 200;
+  const resetCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length;
+  const weekCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length;
+  const mkWeekly = (resetMs, firstAgo = 6 * DAY, latest = 20) => ({
+    key: "codex|weekly_used_pct|",
+    label: "주간",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - firstAgo), value: 10, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latest, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+    ],
+  });
+  const mkSession = (resetMs) => ({
+    key: "codex|session_used_pct|",
+    label: "세션",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * DAY), value: 10, metric: "session_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: 20, metric: "session_used_pct", reset_at: KST(resetMs) },
+    ],
+  });
+  // 7d: 창 안 미래 주간 초기화는 초기화+(-7일) 두 줄.
+  const reset7 = NOW + 2 * DAY, week7 = reset7 - 7 * DAY;
+  const win7 = chartWindow("7d", NOW, NOW - 7 * DAY);
+  const out7 = buildChartSvg({ vis: [mkWeekly(reset7)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(out7.inner), 1, "7d 주간은 초기화 선 하나");
+  assert.equal(weekCount(out7.inner), 1, "7d 주간은 -7일 선 하나");
+  assert.ok(out7.inner.includes(`<line x1="${out7.X(reset7)}"`), "초기화 선 위치");
+  assert.ok(out7.inner.includes(`<line x1="${out7.X(week7)}"`), "-7일 선 위치");
+  assert.ok(out7.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "-7일 선은 같은 색·같은 점선");
+  assert.ok(!out7.inner.includes("<title>"), "-7일 선에 title이 있으면 안 돼요");
+  assert.ok(out7.inner.indexOf('opacity=".4"') < out7.inner.indexOf("<path"), "-7일 선은 데이터 경로 아래에 그려야 해요");
+  assert.ok(out7.inner.indexOf('opacity=".7"') < out7.inner.indexOf("<path"), "초기화 선은 데이터 경로 아래에 그려야 해요");
+  assert.ok(!out7.inner.includes("지금"), "지금 표시가 있으면 안 돼요");
+  // all: 넓은 창에서는 두 줄.
+  const resetAll = NOW + 2 * DAY, weekAll = resetAll - 7 * DAY;
+  const winAll = chartWindow("all", NOW, NOW - 6 * DAY, resetAll);
+  assert.equal(winAll.t0, NOW - 6 * DAY, "all 넓은 창 t0");
+  const outAll = buildChartSvg({ vis: [mkWeekly(resetAll, 5 * DAY)], now: NOW, t0: winAll.t0, t1: winAll.t1, W, H, range: "all" });
+  assert.equal(resetCount(outAll.inner), 1, "all 주간은 초기화 선 하나");
+  assert.equal(weekCount(outAll.inner), 1, "all 주간은 -7일 선 하나");
+  assert.ok(outAll.inner.includes(`<line x1="${outAll.X(weekAll)}"`), "all -7일 선 위치");
+  // 24h: 창 안 미래라도 -7일 선은 절대 그리지 않는다.
+  const mk24 = (resetMs) => ({
+    key: "codex|weekly_used_pct|",
+    label: "주간",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - 12 * 3600e3), value: 10, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: 20, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+    ],
+  });
+  const win24 = chartWindow("24h", NOW, NOW - DAY);
+  const out24 = buildChartSvg({ vis: [mk24(NOW + 12 * 3600e3)], now: NOW, t0: win24.t0, t1: win24.t1, W, H, range: "24h" });
+  assert.equal(resetCount(out24.inner), 1, "24h 창 안은 초기화 선 하나");
+  assert.equal(weekCount(out24.inner), 0, "24h는 -7일 선이 없어야 해요");
+  const out24Out = buildChartSvg({ vis: [mk24(NOW + 2 * DAY)], now: NOW, t0: win24.t0, t1: win24.t1, W, H, range: "24h" });
+  assert.equal(resetCount(out24Out.inner), 0, "24h 창 밖은 초기화 선이 없어야 해요");
+  assert.equal(weekCount(out24Out.inner), 0, "24h 창 밖은 -7일 선이 없어야 해요");
+  // session: 7d라도 -7일 선이 없다.
+  const outSess = buildChartSvg({ vis: [mkSession(NOW + 2 * DAY)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outSess.inner), 1, "session도 초기화 선은 있다");
+  assert.equal(weekCount(outSess.inner), 0, "session은 -7일 선이 없어야 해요");
+  // -7일이 창 밖이면 그리지 않는다 (all 좁은 창: reset 안, -7일 밖).
+  const narrowAll = chartWindow("all", NOW, NOW - 4 * DAY);
+  const outNarrow = buildChartSvg({ vis: [mkWeekly(NOW + 2 * DAY, 3 * DAY)], now: NOW, t0: narrowAll.t0, t1: narrowAll.t1, W, H, range: "all" });
+  assert.equal(resetCount(outNarrow.inner), 1, "좁은 창 안 reset은 있다");
+  assert.equal(weekCount(outNarrow.inner), 0, "-7일이 창 밖이면 그리지 않아야 해요");
+  // 0 사용 주간은 7d에서도 둘 다 없다.
+  const outZero = buildChartSvg({ vis: [mkWeekly(NOW + 2 * DAY, 6 * DAY, 0)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outZero.inner), 0, "0이면 초기화 선이 없어야 해요");
+  assert.equal(weekCount(outZero.inner), 0, "0이면 -7일 선이 없어야 해요");
+  // weekStart 불리언 그리기 형식도 같은 동작이다.
+  const outBool = buildChartSvg({ vis: [mkWeekly(reset7)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, weekStart: true });
+  assert.equal(weekCount(outBool.inner), 1, "weekStart true면 -7일 선이 있어야 해요");
+  const outBoolOff = buildChartSvg({ vis: [mkWeekly(reset7)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, weekStart: false });
+  assert.equal(weekCount(outBoolOff.inner), 0, "weekStart false면 -7일 선이 없어야 해요");
 });
 
 test("html 동기화와 스크립트 구문이 유지된다", () => {

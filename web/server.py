@@ -559,8 +559,9 @@ section:first-of-type { margin-top:0; }
 .lim-list td.c-reset { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .lim-list .c-svc .chip { display:flex; width:max-content; margin-top:2px; }
 .lim-list td { white-space:nowrap; }
+.lim-list th:nth-child(1), .lim-list td.c-svc, .lim-list th:nth-child(2), .lim-list td:nth-child(2) { width:1%; white-space:nowrap; }
 .lim-list th:nth-child(3), .lim-list td.c-note { width:1%; min-width:140px; max-width:200px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; }
-.lim-list td.c-val { width:25%; }
+.lim-list th:nth-child(4), .lim-list td.c-val { width:auto; }
 .lim-list .usage { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-1) var(--sp-2); }
 .lim-list .usage-value { min-width:5ch; }
 .lim-list .meter { flex:1; min-width:120px; }
@@ -613,6 +614,7 @@ a.raw-link { color:var(--accent); font-size:12px; margin-left:6px; text-decorati
   td.c-note:empty,td.c-src:empty { display:none; }
   .more { border:0; }
   .lim-list td { white-space:normal; overflow-wrap:anywhere; }
+  .lim-list th:nth-child(1), .lim-list th:nth-child(2), .lim-list td.c-svc, .lim-list td:nth-child(2) { width:auto; white-space:normal; }
   .lim-list th:nth-child(3), .lim-list td.c-note { width:auto; min-width:0; max-width:none; }
   .lim-list td.c-val { grid-column:1 / -1; grid-row:2; width:auto; text-align:left; }
   .lim-list .usage { display:grid; gap:var(--sp-1); }
@@ -1251,6 +1253,7 @@ function latestFutureReset(s, now) {
     if (latestTs === null || t > latestTs) { latestTs = t; latest = r; }
   }
   if (!latest) return null;
+  if (num(latest.value) === 0) return null;
   const cand = tms(latest.reset_at);
   return cand !== null && cand > now ? cand : null;
 }
@@ -1262,6 +1265,16 @@ function latestResetInWin(s, now, t1) {
 function buildChartSvg(opts) {
   // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
   const { vis, now, t0, t1, W, H } = opts;
+  const range = opts.range;
+  const weekStart = range !== undefined ? (range === "7d" || range === "all") : !!opts.weekStart;
+  const isWeeklySeries = s => {
+    const keyMetric = (s.key || "").split("|")[1] || "";
+    if (/weekly/.test(keyMetric)) return true;
+    if (/weekly/.test(s.metric || "")) return true;
+    if ((s.rows || []).some(r => /weekly/.test(r.metric || ""))) return true;
+    if (!(s.key || "").includes("|") && /weekly/.test(s.key || "")) return true;
+    return false;
+  };
   const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
   // 시리즈마다 최신 기록(ts 최대)의 미래·창 안 초기화 시각 하나만 (점선 세로선). 오래된 기록은 무시한다.
   const resetsInWin = vis.map(s => ({ s, reset: latestResetInWin(s, now, t1) }));
@@ -1283,6 +1296,13 @@ function buildChartSvg(opts) {
     if (reset === null) continue;
     const x = X(reset);
     g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + ih}" stroke="${s.color}" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round" opacity=".7"/>`;
+    if (weekStart && isWeeklySeries(s)) {
+      const weekMs = reset - 7 * DAY;
+      if (weekMs >= t0 && weekMs <= t1) {
+        const wx = X(weekMs);
+        g += `<line x1="${wx}" x2="${wx}" y1="${m.t}" y2="${m.t + ih}" stroke="${s.color}" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round" opacity=".4"/>`;
+      }
+    }
   }
   const maxTicks = Math.max(3, Math.floor(iw / 64));
   const cand = [10 * MIN, 30 * MIN, HR, 3 * HR, 6 * HR, 12 * HR, DAY, 2 * DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY];
@@ -1325,7 +1345,7 @@ function drawChart(card, now, win) {
   const cur = card.querySelector("[data-cur]");
   const emptyBox = msg => { plot.innerHTML = `<div class="chart-empty" style="height:${H}px"><div>${msg}</div></div>`; cur.textContent = ""; };
   if (!vis.length) return emptyBox("표시할 항목을 위 범례에서 선택하세요.");
-  const built = buildChartSvg({ vis, now, t0, t1, W, H });
+  const built = buildChartSvg({ vis, now, t0, t1, W, H, range: rng });
   if (!built.inWin.length) return emptyBox("이 기간에는 기록이 없어요.<br><span class='t-cap'>기간을 ‘전체’로 바꿔 보세요.</span>");
   const { inner: g, nowX, X, m, iw, ih, span, inWin, ends } = built;
   const label = `${svcName(card.dataset.svc)} 사용률 추이. ` + ends.map(e => `${e.s.label} 현재 ${fmtPct(e.v)}퍼센트`).join(", ");
