@@ -1679,11 +1679,11 @@ test("renderCalendar 엔트리는 HH:MM - 사용량 형식이고 구분자는 �
 
 test("cal-entry 글자 크기가 읽기 편하게 커져 있고 cal-pct는 볼드가 아니다", () => {
   const { html } = makeSandbox();
-  // 데스크톱 .cal-entry: font-size:13px; line-height:18px
+  // 데스크톱 .cal-entry: font-size:15px; line-height:20px
   const entryBodies = [...html.matchAll(/\.cal-entry\s*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.equal(entryBodies.length, 2, "데스크톱·모바일 .cal-entry 규칙이 두 개 있어야 해요");
-  assert.match(entryBodies[0], /font-size\s*:\s*13px/, "데스크톱 cal-entry는 13px여야 해요");
-  assert.match(entryBodies[0], /line-height\s*:\s*18px/, "데스크톱 cal-entry는 18px여야 해요");
+  assert.match(entryBodies[0], /font-size\s*:\s*15px/, "데스크톱 cal-entry는 15px여야 해요");
+  assert.match(entryBodies[0], /line-height\s*:\s*20px/, "데스크톱 cal-entry는 20px여야 해요");
   // 모바일(max-width:719px) .cal-entry: font-size:11px; line-height:14px
   const mediaIdx = html.indexOf("@media (max-width:719px)");
   assert.ok(mediaIdx !== -1, "모바일 미디어 쿼리가 있어야 해요");

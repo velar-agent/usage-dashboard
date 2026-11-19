@@ -541,7 +541,7 @@ section:first-of-type { margin-top:0; }
 .cal-day[data-today="1"] { background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
 .cal-num { font-size:12px; line-height:16px; font-weight:700; color:var(--ink-2); }
 .cal-day[data-today="1"] .cal-num { color:var(--accent); }
-.cal-entry { font-size:13px; line-height:18px; color:var(--ink-2); border-left:3px solid var(--accent); padding-left:5px; overflow-wrap:anywhere; word-break:keep-all; }
+.cal-entry { font-size:15px; line-height:20px; color:var(--ink-2); border-left:3px solid var(--accent); padding-left:5px; overflow-wrap:anywhere; word-break:keep-all; }
 .cal-pct { white-space:nowrap; font-weight:400; font-variant-numeric:tabular-nums }
 .cal-pct[data-s="ok"]{color:var(--ok)} .cal-pct[data-s="warn"]{color:var(--warn)} .cal-pct[data-s="bad"]{color:var(--bad)} .cal-pct[data-s="na"]{color:var(--muted)}
 @media (max-width:719px){
