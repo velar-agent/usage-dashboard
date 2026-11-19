@@ -819,6 +819,171 @@ test("차트는 창 밖 초기화 만기 라벨·툴팁을 보이지 않고 창 
   assert.ok(!inside.inner.includes("만기"), "창 안 차트에 '만기 …' 라벨이 있으면 안 돼요");
 });
 
+test("chartWindow(all)은 가장 먼 미래 초기화를 대칭으로 포함한다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  assert.equal(typeof chartWindow, "function", "chartWindow가 전역 함수로 있어야 해요");
+  const DAY = 86400e3;
+  const earliest = NOW - 4 * DAY;
+  const reset = NOW + 6 * DAY;
+  // (a) 가장 먼 초기화(6일)가 대칭 span(4일)을 넘으면 span=6일로 대칭 확장한다.
+  const w = chartWindow("all", NOW, earliest, reset);
+  const span = reset - NOW;
+  assert.equal(w.t0, NOW - span, "t0는 now - span 이어야 해요");
+  assert.equal(w.t1, NOW + span, "t1은 now + span 이어야 해요");
+  assert.equal((w.t0 + w.t1) / 2, NOW, "now가 정확히 중앙이어야 해요");
+  // 왼쪽은 가장 이른 기록보다 앞에 빈 공간이 생길 수 있다 (허용).
+  assert.ok(w.t0 < earliest, "왼쪽 빈 공간이 생겨도 된다");
+  // 범위 상한 경계에 정확히 닿아도 된다 (이 조건에서는 초과하지 않음).
+  const edge = chartWindow("all", NOW, earliest, NOW + 4 * DAY);
+  assert.equal(edge.t0, earliest, "초기화가 정확히 span과 같으면 창은 그대로이다");
+  assert.equal(edge.t1, NOW + 4 * DAY, "초기화가 정확히 span과 같으면 창은 그대로이다");
+});
+
+test("chartWindow(all)은 범위 안 초기화를 무시하고 가장자리 가드를 유지한다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const DAY = 86400e3;
+  // (b) 범위 안(2일) 초기화는 창을 바꾸지 않는다.
+  const earliest = NOW - 7 * DAY;
+  const inside = chartWindow("all", NOW, earliest, NOW + 2 * DAY);
+  assert.equal(inside.t0, earliest, "범위 안 초기화는 t0를 바꾸면 안 돼요");
+  assert.equal(inside.t1, NOW + 7 * DAY, "범위 안 초기화는 t1을 바꾸면 안 돼요");
+  assert.equal((inside.t0 + inside.t1) / 2, NOW, "대칭 중앙이 유지되어야 해요");
+  // (b) farthest가 없거나 null/미정의이면 기존 earliest 대칭 그대로이다.
+  const noFar = chartWindow("all", NOW, earliest);
+  assert.equal(noFar.t0, earliest, "farthest가 없으면 t0는 earliest이다");
+  assert.equal(noFar.t1, NOW + (NOW - earliest), "farthest가 없으면 t1은 대칭이다");
+  const nullFar = chartWindow("all", NOW, earliest, null);
+  assert.equal(nullFar.t0, earliest, "null farthest면 t0는 earliest이다");
+  assert.equal(nullFar.t1, NOW + (NOW - earliest), "null farthest면 t1은 대칭이다");
+  // earliest >= now 가드: farthest가 없으면 30분 가드 그대로이다.
+  const guarded = chartWindow("all", NOW, NOW + 3600e3);
+  assert.equal(guarded.t0, NOW - 30 * 60e3, "미래 earliest는 30분 가드이다");
+  assert.equal(guarded.t1, NOW + 30 * 60e3, "미래 earliest 대칭 가드이다");
+  // 가드 상황에서도 farthest가 더 멀면 대칭 확장한다.
+  const guardedFar = chartWindow("all", NOW, NOW + 3600e3, NOW + 2 * DAY);
+  assert.equal(guardedFar.t0, NOW - 2 * DAY, "가드보다 먼 farthest는 대칭 확장한다");
+  assert.equal(guardedFar.t1, NOW + 2 * DAY, "가드보다 먼 farthest는 대칭 확장한다");
+});
+
+test("chartWindow 24h/7d는 farthestReset 인자를 무시한다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const DAY = 86400e3;
+  // (c) 24h/7d는 4번째 인자가 아무리 커도 무시한다.
+  const earliest = NOW - 4 * DAY;
+  const far = NOW + 30 * DAY;
+  const w24 = chartWindow("24h", NOW, earliest, far);
+  assert.equal(w24.t0, NOW - DAY, "24h t0는 고정이다");
+  assert.equal(w24.t1, NOW + DAY, "24h t1은 고정이다");
+  const w7 = chartWindow("7d", NOW, earliest, far);
+  assert.equal(w7.t0, NOW - 7 * DAY, "7d t0는 고정이다");
+  assert.equal(w7.t1, NOW + 7 * DAY, "7d t1은 고정이다");
+  // 4번째 인자가 없어도 동일하다 (기존 호출 호환).
+  assert.equal(chartWindow("24h", NOW, earliest).t0, w24.t0, "24h 무인자와 유인자는 같아야 해요");
+  assert.equal(chartWindow("7d", NOW, earliest).t1, w7.t1, "7d 무인자와 유인자는 같아야 해요");
+});
+
+test("all 창은 6일 뒤 초기화를 그려내고 두 카드가 같은 창을 공유한다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const latestFutureReset = fn("latestFutureReset");
+  assert.equal(typeof latestFutureReset, "function", "latestFutureReset이 있어야 해요");
+  const DAY = 86400e3;
+  const W = 400, H = 200;
+  // earliest 4일 Ago, reset 6일 Ahead 케이스 (d).
+  const earliest = NOW - 4 * DAY;
+  const resetFar = NOW + 6 * DAY;
+  const serFar = fakeSeries("far", NOW - 4 * DAY, NOW - 60e3, resetFar);
+  const win = chartWindow("all", NOW, earliest, resetFar);
+  const outFar = buildChartSvg({ vis: [serFar], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal((outFar.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "6일 뒤 초기화가 창 안에 있으면 점선이 하나여야 해요");
+  assert.equal((win.t0 + win.t1) / 2, NOW, "now가 정확히 중앙이어야 해요");
+  assert.ok(!outFar.inner.includes("지금"), "지금 표시가 있으면 안 돼요");
+  assert.ok(!outFar.inner.includes("accent-soft"), "미래 음영 rect가 있으면 안 돼요");
+  assert.ok(!outFar.inner.includes("<title>"), "점선에 <title>이 있으면 안 돼요");
+  assert.ok(!outFar.inner.includes("만기"), "만기 라벨이 있으면 안 돼요");
+  // 좁은 창(대칭 4일)으로는 그려지지 않는다는 대조군.
+  const narrow = chartWindow("all", NOW, earliest);
+  const outNarrow = buildChartSvg({ vis: [serFar], now: NOW, t0: narrow.t0, t1: narrow.t1, W, H });
+  assert.equal((outNarrow.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "좁은 창에서는 6일 뒤 초기화가 그려지지 않아야 해요");
+
+  // 두 카드가 서로 다른 farthest를 가져도 창은 한 번에 계산해 동일하다.
+  const serA = fakeSeries("a", NOW - 4 * DAY, NOW - 60e3, NOW + 2 * DAY);
+  const serB = fakeSeries("b", NOW - 4 * DAY, NOW - 60e3, NOW + 6 * DAY);
+  // renderTrends와 같은 규칙으로 계산: 전체 시리즈의 latestFutureReset 최대값.
+  const fars = [serA, serB].map((s) => latestFutureReset(s, NOW));
+  const farthest = Math.max(...fars);
+  assert.equal(farthest, NOW + 6 * DAY, "farthest는 전체 최대값이어야 해요");
+  // earliest도 전체 최소값.
+  const earliestAll = Math.min(NOW - 4 * DAY, NOW - 4 * DAY);
+  const sharedWin = chartWindow("all", NOW, earliestAll, farthest);
+  assert.equal(sharedWin.t0, NOW - 6 * DAY, "공유 창 t0는 farthest 기준이어야 해요");
+  assert.equal(sharedWin.t1, NOW + 6 * DAY, "공유 창 t1는 farthest 기준이어야 해요");
+  // 카드별로 따로 계산하면 serA alone은 좁은 4일 창이 된다 — 공유 창과 달라야 한다.
+  const perCardA = chartWindow("all", NOW, earliestAll, latestFutureReset(serA, NOW));
+  assert.notEqual(perCardA.t1, sharedWin.t1, "카드별 계산은 공유 창과 달라야 해요 (이것이 공유 창이 필요한 이유)");
+  // 공유 창으로 두 카드 모두 그려보면 nowX가 동일하고 점선이 각각 하나이다.
+  const outA = buildChartSvg({ vis: [serA], now: NOW, t0: sharedWin.t0, t1: sharedWin.t1, W, H });
+  const outB = buildChartSvg({ vis: [serB], now: NOW, t0: sharedWin.t0, t1: sharedWin.t1, W, H });
+  assert.equal(outA.nowX, outB.nowX, "두 카드의 now x는 동일해야 해요");
+  assert.equal(outA.nowX, 36 + (W - 36 - 48) / 2, "now x가 창 중앙이어야 해요");
+  assert.equal((outA.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "A 카드도 점선이 하나여야 해요");
+  assert.equal((outB.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "B 카드도 점선이 하나여야 해요");
+  // 범례에서 숨겨도 창은 움직이지 않는다: farthest 계산이 숨긴 시리즈까지 포함해야 한다.
+  // 숨긴 serB가 있더라도 매핑은 그대로 최대값이다.
+  seriesVisibleToggleCheck(serA, serB, NOW, latestFutureReset);
+});
+
+function seriesVisibleToggleCheck(serA, serB, NOW, latestFutureReset) {
+  // 숨긴(seriesVisible=false) 시리즈가 있어도 farthest는 그 시리즈를 포함한다.
+  // renderTrends는 vis 필터링 전에 전체 series.values()로 farthest를 계산한다.
+  const DAY = 86400e3;
+  void DAY;
+  // latestFutureReset은 visibility와 무관하게 최신 기록만으로 결정된다.
+  assert.equal(latestFutureReset(serA, NOW), NOW + 2 * DAY, "숨김과 무관하게 최신 미래 초기화");
+  assert.equal(latestFutureReset(serB, NOW), NOW + 6 * DAY, "숨김과 무관하게 최신 미래 초기화");
+}
+
+test("drawChart는 창 확장에 따라 다시 그려진다", () => {
+  const { sandbox, fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const drawChart = fn("drawChart");
+  const DAY = 86400e3;
+  const W = 400;
+  const earliest = NOW - 4 * DAY;
+  const resetFar = NOW + 6 * DAY;
+  const rows = [
+    { ts: KST(NOW - 4 * DAY), value: 10, reset_at: KST(resetFar) },
+    { ts: KST(NOW - 60e3), value: 30, reset_at: KST(resetFar) },
+  ];
+  vm.runInContext(
+    `displayedTrend = { range: "all", version: 1, series: new Map([["codex", [{ key: "rst|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "", rows: ${JSON.stringify(rows)} }]]]) };
+     seriesVisible["rst|weekly_used_pct|"] = true;`,
+    sandbox
+  );
+  const plot = makeEl("div"); plot.clientWidth = W;
+  const cur = makeEl("span");
+  const card = { dataset: { svc: "codex" }, clientWidth: W,
+    querySelector: (sel) => (sel === "[data-plot]" ? plot : sel === "[data-cur]" ? cur : makeEl("div")) };
+  const narrowWin = chartWindow("all", NOW, earliest);
+  const broadWin = chartWindow("all", NOW, earliest, resetFar);
+  assert.equal((narrowWin.t0 + narrowWin.t1) / 2, NOW, "좁은 창도 대칭이다");
+  assert.equal((broadWin.t0 + broadWin.t1) / 2, NOW, "넓은 창도 대칭이다");
+  assert.ok(broadWin.t1 > narrowWin.t1, "넓은 창이 더 넓어야 해요");
+  drawChart(card, NOW, narrowWin);
+  const sigNarrow = plot.dataset.sig;
+  const innerNarrow = plot.innerHTML;
+  assert.ok(sigNarrow, "처음 drawChart는 sig를 남겨야 해요");
+  assert.equal((innerNarrow.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "좁은 창에서는 6일 뒤 초기화가 그려지지 않아야 해요");
+  drawChart(card, NOW, broadWin);
+  const sigBroad = plot.dataset.sig;
+  assert.notEqual(sigBroad, sigNarrow, "창이 바뀌면 sig가 바뀌어야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "넓은 창에서는 6일 뒤 초기화가 그려져야 해요");
+});
+
 test("html 동기화와 스크립트 구문이 유지된다", () => {
   const html = loadHtml();
   const scripts = extractScripts(html);

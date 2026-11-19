@@ -1172,14 +1172,19 @@ function effRange() {
   const oldest = tms(RECORDS.at(-1)?.ts);
   return oldest !== null && Date.now() - oldest < 24 * 3600e3 ? "all" : "7d";
 }
-function chartWindow(range, now, earliestTs) {
+function chartWindow(range, now, earliestTs, farthestResetTs) {
   // 모든 카드가 공유하는 시간 창. now가 정확히 중앙에 오도록 만든다 (순수 함수).
   const DAY = 86400e3;
   if (range === "24h") return { t0: now - DAY, t1: now + DAY };
   if (range === "7d") return { t0: now - 7 * DAY, t1: now + 7 * DAY };
   let t0 = Number.isFinite(earliestTs) ? earliestTs : now - DAY;
   if (t0 >= now) t0 = now - 30 * 60e3;
-  return { t0, t1: now + (now - t0) };
+  let span = now - t0;
+  if (Number.isFinite(farthestResetTs) && farthestResetTs > now) {
+    const resetSpan = farthestResetTs - now;
+    if (resetSpan > span) span = resetSpan;
+  }
+  return { t0: now - span, t1: now + span };
 }
 function renderTrends() {
   const root = $("charts"), rng = effRange();
@@ -1212,10 +1217,13 @@ function renderTrends() {
   // 모든 카드가 같은 now·창을 공유한다 (카드별 따로 계산하지 않음).
   const now = Date.now(), rngShown = displayedTrend.range;
   let earliest = Infinity;
-  for (const arr of displayedTrend.series.values()) for (const s of arr) for (const r of s.rows) {
-    const t = tms(r.ts); if (t !== null && t < earliest) earliest = t;
+  let farthestReset = null;
+  for (const arr of displayedTrend.series.values()) for (const s of arr) {
+    for (const r of s.rows) { const t = tms(r.ts); if (t !== null && t < earliest) earliest = t; }
+    const fr = latestFutureReset(s, now);
+    if (fr !== null && (farthestReset === null || fr > farthestReset)) farthestReset = fr;
   }
-  const win = chartWindow(rngShown, now, earliest === Infinity ? null : earliest);
+  const win = chartWindow(rngShown, now, earliest === Infinity ? null : earliest, farthestReset);
   setMode("charts", "data");
   const have = new Map([...root.children].map(c => [c.dataset.svc, c]));
   let prev = null;
@@ -1234,8 +1242,8 @@ function renderTrends() {
   }
   have.forEach(c => c.remove());
 }
-function latestResetInWin(s, now, t1) {
-  // 시리즈의 최신 기록(ts 최대)의 초기화 시각이 미래이고 창 안이면 그 값, 아니면 null (점선 세로선 한 줄).
+function latestFutureReset(s, now) {
+  // 시리즈의 최신 기록(ts 최대)의 초기화 시각이 미래이면 그 값, 아니면 null.
   let latest = null, latestTs = null;
   for (const r of s.rows) {
     const t = tms(r.ts);
@@ -1244,7 +1252,12 @@ function latestResetInWin(s, now, t1) {
   }
   if (!latest) return null;
   const cand = tms(latest.reset_at);
-  return cand !== null && cand > now && cand <= t1 ? cand : null;
+  return cand !== null && cand > now ? cand : null;
+}
+function latestResetInWin(s, now, t1) {
+  // 시리즈의 최신 기록(ts 최대)의 초기화 시각이 미래이고 창 안이면 그 값, 아니면 null (점선 세로선 한 줄).
+  const cand = latestFutureReset(s, now);
+  return cand !== null && cand <= t1 ? cand : null;
 }
 function buildChartSvg(opts) {
   // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
