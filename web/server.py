@@ -530,6 +530,27 @@ section:first-of-type { margin-top:0; }
 .chart-empty { display:grid; place-items:center; text-align:center; color:var(--muted); background:var(--surface-2); border:1px dashed var(--line-strong); border-radius:var(--r-md); padding:var(--sp-4); }
 
 /* =========================================================
+   5.5 리셋 일정 달력
+   ========================================================= */
+.cal-wrap { background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow); padding:var(--sp-4); min-width:0; }
+.cal-title { font-size:15px; line-height:22px; font-weight:700; margin-bottom:var(--sp-3); color:var(--ink); }
+.cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; }
+.cal-dow { background:var(--surface-2); color:var(--muted); font-size:12px; line-height:16px; font-weight:700; text-align:center; padding:8px 4px; }
+.cal-day { background:var(--surface); min-height:76px; padding:6px 6px 8px 8px; display:flex; flex-direction:column; gap:2px; min-width:0; }
+.cal-day[data-out="1"] { background:var(--surface-2); opacity:.55; }
+.cal-day[data-today="1"] { background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
+.cal-num { font-size:12px; line-height:16px; font-weight:700; color:var(--ink-2); }
+.cal-day[data-today="1"] .cal-num { color:var(--accent); }
+.cal-entry { font-size:11px; line-height:15px; color:var(--ink-2); border-left:3px solid var(--accent); padding-left:5px; overflow-wrap:anywhere; word-break:keep-all; }
+@media (max-width:719px){
+  .cal-wrap { padding:var(--sp-3); }
+  .cal-day { min-height:56px; padding:4px 4px 6px 4px; }
+  .cal-dow { padding:6px 2px; font-size:11px; }
+  .cal-entry { font-size:11px; line-height:14px; }
+  .cal-num { font-size:11px; }
+}
+
+/* =========================================================
    6. 기록 표
    ========================================================= */
 .lim-tb[hidden] { display:none; }
@@ -736,6 +757,18 @@ td.c-time[data-dup] { color:var(--muted); }
         <tbody id="limBody"></tbody>
       </table>
     </div>
+  </section>
+
+  <section id="s-calendar" aria-labelledby="h-calendar">
+    <div class="sec-h">
+      <div><h2 class="t-h2" id="h-calendar">리셋 일정</h2><p class="sub">미래 초기화만 KST 달력으로 보여 줘요</p></div>
+      <div class="seg" role="group" aria-label="월 이동">
+        <button type="button" id="calPrev">이전 달</button>
+        <button type="button" id="calNext">다음 달</button>
+        <button type="button" id="calToday">오늘</button>
+      </div>
+    </div>
+    <div id="calBody"></div>
   </section>
 
   <section id="s-trends" aria-labelledby="h-trends">
@@ -1262,6 +1295,121 @@ function latestResetInWin(s, now, t1) {
   const cand = latestFutureReset(s, now);
   return cand !== null && cand <= t1 ? cand : null;
 }
+
+/* ---------- 리셋 일정 달력 (순수 함수 + 렌더) ---------- */
+let calCursor = null;   // 표시 중인 월 (미persist) null=현재 KST 월
+function monthShift(year, month, delta) {
+  const total = year * 12 + (month - 1) + delta;
+  const y = Math.floor(total / 12);
+  const m = total - y * 12 + 1;
+  return { y, m, year: y, month: m };
+}
+function calendarEntries(seriesList, now) {
+  const out = [];
+  for (const item of seriesList || []) {
+    if (!item) continue;
+    const r = item.r || item;
+    if (!r) continue;
+    const rs = item.rs !== undefined && item.rs !== null ? item.rs : tms(r.reset_at);
+    const n = item.n !== undefined && item.n !== null ? item.n : num(r.value);
+    if (rs === null || rs === undefined || !Number.isFinite(rs) || rs <= now) continue;
+    if (n === 0) continue;
+    out.push({ t: rs, service: r.service, metric: r.metric, note: r.note || "" });
+  }
+  out.sort((a, b) => a.t - b.t || String(a.service).localeCompare(String(b.service)) || String(a.metric).localeCompare(String(b.metric)));
+  return out;
+}
+function calendarMonth(year, month, entries, now) {
+  const title = `${year}년 ${month}월`;
+  const todayK = kp(now);
+  const kstMidnight = (y, m, d) => Date.UTC(y, m - 1, d, 0, 0) - 9 * 3600e3;
+  const firstMs = kstMidnight(year, month, 1);
+  const firstWd = kp(firstMs).wd;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const numWeeks = Math.ceil((firstWd + daysInMonth) / 7);
+  const startMs = firstMs - firstWd * 86400e3;
+  const byDay = new Map();
+  for (const e of entries || []) {
+    const k = kp(e.t);
+    const key = `${k.y}-${k.mo}-${k.d}`;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(e);
+  }
+  for (const arr of byDay.values()) arr.sort((a, b) => a.t - b.t || String(a.service).localeCompare(String(b.service)) || String(a.metric).localeCompare(String(b.metric)));
+  const weeks = [];
+  for (let w = 0; w < numWeeks; w++) {
+    const week = [];
+    for (let d = 0; d < 7; d++) {
+      const cellMs = startMs + (w * 7 + d) * 86400e3;
+      const k = kp(cellMs);
+      const key = `${k.y}-${k.mo}-${k.d}`;
+      const inMonth = k.y === year && k.mo === month;
+      const today = k.y === todayK.y && k.mo === todayK.mo && k.d === todayK.d;
+      week.push({ y: k.y, m: k.mo, d: k.d, inMonth, today, entries: byDay.get(key) || [] });
+    }
+    weeks.push(week);
+  }
+  return { title, weeks };
+}
+function renderCalendar(now = Date.now()) {
+  const root = $("calBody");
+  if (!root) return;
+  if (!loaded) {
+    root.innerHTML = `<div class="chart-empty" style="min-height:140px"><div>리셋 일정을 불러오는 중이에요</div></div>`;
+    return;
+  }
+  if (!RECORDS.length) {
+    root.innerHTML = `<div class="chart-empty" style="min-height:140px"><div>표시할 리셋 일정이 없어요</div></div>`;
+    return;
+  }
+  const seriesList = latestSeries().map(r => viewOf(r, now));
+  const entries = calendarEntries(seriesList, now);
+  if (!entries.length) {
+    root.innerHTML = `<div class="chart-empty" style="min-height:140px"><div>표시할 리셋 일정이 없어요</div></div>`;
+    return;
+  }
+  if (!calCursor) {
+    const k = kp(now);
+    calCursor = { y: k.y, m: k.mo };
+  }
+  const { title, weeks } = calendarMonth(calCursor.y, calCursor.m, entries, now);
+  const dowHtml = WD.map(c => `<div class="cal-dow">${c}</div>`).join("");
+  let cells = "";
+  for (const week of weeks) {
+    for (const day of week) {
+      const todayAttr = day.today ? ` data-today="1" aria-current="date"` : "";
+      const outAttr = day.inMonth ? "" : ` data-out="1"`;
+      const entryHtml = day.entries.map(e => {
+        const label = `${esc(svcName(e.service))} ${esc(metricLabel(e.metric))} ${fmtHM(e.t)}`;
+        const titleAttr = ` title="${label}${e.note ? " · " + esc(e.note) : ""}"`;
+        return `<div class="cal-entry"${titleAttr}>${label}</div>`;
+      }).join("");
+      cells += `<div class="cal-day"${outAttr}${todayAttr}><div class="cal-num">${day.d}</div>${entryHtml}</div>`;
+    }
+  }
+  root.innerHTML = `<div class="cal-wrap"><div class="cal-title">${esc(title)}</div><div class="cal-grid" role="grid" aria-label="${esc(title)} 리셋 일정">${dowHtml}${cells}</div></div>`;
+}
+try {
+  const calPrev = $("calPrev"), calNext = $("calNext"), calTodayBtn = $("calToday");
+  if (calPrev) calPrev.onclick = () => {
+    const cur = calCursor || (() => { const k = kp(Date.now()); return calCursor = { y: k.y, m: k.mo }; })();
+    const nxt = monthShift(cur.y, cur.m, -1);
+    calCursor = { y: nxt.y, m: nxt.m };
+    renderCalendar(Date.now());
+  };
+  if (calNext) calNext.onclick = () => {
+    const cur = calCursor || (() => { const k = kp(Date.now()); return calCursor = { y: k.y, m: k.mo }; })();
+    const nxt = monthShift(cur.y, cur.m, 1);
+    calCursor = { y: nxt.y, m: nxt.m };
+    renderCalendar(Date.now());
+  };
+  if (calTodayBtn) calTodayBtn.onclick = () => {
+    const k = kp(Date.now());
+    calCursor = { y: k.y, m: k.mo };
+    renderCalendar(Date.now());
+  };
+} catch (e) {}
+
 function buildChartSvg(opts) {
   // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
   const { vis, now, t0, t1, W, H } = opts;
@@ -1530,9 +1678,9 @@ async function load() {
 }
 function renderAll() {
   const now = Date.now();
-  renderCollection(now); renderLimits(now);
+  renderCollection(now); renderLimits(now); renderCalendar(now);
   const empty = loaded && !RECORDS.length;
-  $("s-trends").hidden = empty; $("s-records").hidden = empty;
+  $("s-trends").hidden = empty; $("s-records").hidden = empty; $("s-calendar").hidden = empty;
   if (!empty) { renderTrends(); renderTable(); }
   renderRawList();
   const foot = [`5분 수집 슬롯 기준 자동 새로고침`];
@@ -1546,6 +1694,7 @@ function tick() {   // 30초마다 지연 여부만 다시 평가한다 (서버 
   const now = Date.now();
   renderCollection(now);
   if (loaded && RECORDS.length) renderLimits(now);
+  renderCalendar(now);
 }
 
 /* ---------- 테마 ---------- */

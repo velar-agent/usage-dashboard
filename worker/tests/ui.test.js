@@ -1158,3 +1158,135 @@ test("html 동기화와 스크립트 구문이 유지된다", () => {
   );
   assert.equal(out.status ?? 0, 0, "html.js가 server.py와 다릅니다");
 });
+
+test("calendarEntries는 과거 초기화와 값 0과 초기화 없음 시리즈를 제외하고 시간순 정렬한다", () => {
+  const { fn } = makeSandbox();
+  const calendarEntries = fn("calendarEntries");
+  assert.equal(typeof calendarEntries, "function", "calendarEntries가 전역 함수로 있어야 해요");
+  const now = NOW;
+  const future = now + 86400e3;
+  const list = [
+    { r: { service: "codex", metric: "weekly_used_pct", note: "Pro", reset_at: KST(future), value: 10 }, rs: future, n: 10, pct: true },
+    { r: { service: "claude", metric: "weekly_used_pct", note: "", reset_at: KST(now - 3600e3), value: 20 }, rs: now - 3600e3, n: 20, pct: true },
+    { r: { service: "muse", metric: "weekly_used_pct", note: "", reset_at: KST(future + 3600e3), value: 0 }, rs: future + 3600e3, n: 0, pct: true },
+    { r: { service: "grok", metric: "weekly_used_pct", note: "", reset_at: null, value: 5 }, rs: null, n: 5, pct: true },
+    { r: { service: "gemini", metric: "weekly_used_pct", note: "X", reset_at: KST(future - 3600e3), value: 7 }, rs: future - 3600e3, n: 7, pct: true },
+  ];
+  const out = calendarEntries(list, now);
+  assert.equal(out.length, 2, "미래이고 값 0이 아닌 것만 남아야 해요");
+  assert.equal(out[0].t, future - 3600e3, "가장 이른 미래가 먼저여야 해요");
+  assert.equal(out[1].t, future, "정렬 순서가 시간순이어야 해요");
+  assert.equal(out[0].service, "gemini");
+  assert.equal(out[1].service, "codex");
+});
+
+test("calendarMonth는 KST 경계를 존중하고 Z 시각도 KST 날짜로 배치한다", () => {
+  const { fn } = makeSandbox();
+  const calendarMonth = fn("calendarMonth");
+  assert.equal(typeof calendarMonth, "function", "calendarMonth가 전역 함수로 있어야 해요");
+  const now = Date.parse("2026-11-19T12:00:00+09:00");
+  const tLateNov19 = Date.parse("2026-11-19T23:30+09:00");
+  const tEarlyNov20 = Date.parse("2026-11-20T00:10+09:00");
+  const tZCross = Date.parse("2026-11-19T15:30Z");
+  // Z 15:30는 KST 11월 20일 00:30이다
+  assert.equal(new Date(tZCross).toISOString(), "2026-11-19T15:30:00.000Z");
+  const entries = [
+    { t: tLateNov19, service: "codex", metric: "weekly_used_pct", note: "A" },
+    { t: tEarlyNov20, service: "claude", metric: "weekly_used_pct", note: "B" },
+    { t: tZCross, service: "grok", metric: "weekly_used_pct", note: "C" },
+    { t: Date.parse("2026-11-20T01:00:00+09:00"), service: "gemini", metric: "weekly_used_pct", note: "D" },
+  ];
+  const { weeks } = calendarMonth(2026, 11, entries, now);
+  const flat = weeks.flat();
+  const cellFor = (y, m, d) => flat.find(c => c.y === y && c.m === m && c.d === d);
+  const c19 = cellFor(2026, 11, 19);
+  const c20 = cellFor(2026, 11, 20);
+  assert.ok(c19 && c20, "11월 19일과 20일 셀이 있어야 해요");
+  assert.equal(c19.entries.length, 1, "23:30은 KST 11월 19일에 있어야 해요");
+  assert.equal(c19.entries[0].service, "codex");
+  assert.equal(c20.entries.length, 3, "00:10과 Z가 건너간 날짜가 11월 20일에 있어야 해요");
+  assert.equal(c20.entries[0].service, "claude");
+  assert.equal(c20.entries[1].service, "grok");
+  assert.equal(c20.entries[2].service, "gemini");
+});
+
+test("calendarMonth 2026년 11월은 일요일에 시작하고 today는 오늘만 표시한다", () => {
+  const { fn } = makeSandbox();
+  const calendarMonth = fn("calendarMonth");
+  const now = Date.parse("2026-11-15T12:00:00+09:00");
+  const empty = calendarMonth(2026, 11, [], now);
+  assert.equal(empty.title, "2026년 11월");
+  assert.ok(empty.weeks.length === 5 || empty.weeks.length === 6, "주 행수는 5 또는 6이어야 해요");
+  const first = empty.weeks[0][0];
+  assert.equal(first.y, 2026);
+  assert.equal(first.m, 11);
+  assert.equal(first.d, 1, "2026년 11월 1일은 일요일 시작이어야 해요");
+  assert.equal(first.inMonth, true);
+  assert.equal(first.today, false);
+  const flat = empty.weeks.flat();
+  const todays = flat.filter(c => c.today);
+  assert.equal(todays.length, 1, "today 셀은 하나만 있어야 해요");
+  assert.equal(todays[0].y, 2026);
+  assert.equal(todays[0].m, 11);
+  assert.equal(todays[0].d, 15);
+  // 항목 배치는 시간순으로 같은 날짜 안에 정렬된다
+  const t1 = Date.parse("2026-11-19T10:00:00+09:00");
+  const t2 = Date.parse("2026-11-19T09:00:00+09:00");
+  const entries = [
+    { t: t1, service: "codex", metric: "weekly_used_pct", note: "late" },
+    { t: t2, service: "claude", metric: "weekly_used_pct", note: "early" },
+  ];
+  const withE = calendarMonth(2026, 11, entries, now);
+  const c19 = withE.weeks.flat().find(c => c.y === 2026 && c.m === 11 && c.d === 19);
+  assert.ok(c19);
+  assert.equal(c19.entries.length, 2);
+  assert.equal(c19.entries[0].t, t2, "같은 날 항목은 시간순이어야 해요");
+  assert.equal(c19.entries[1].t, t1);
+});
+
+test("monthShift는 연도 경계를 넘는다", () => {
+  const { fn } = makeSandbox();
+  const monthShift = fn("monthShift");
+  assert.equal(typeof monthShift, "function", "monthShift가 전역 함수로 있어야 해요");
+  const next = monthShift(2026, 12, 1);
+  assert.equal(next.y, 2027);
+  assert.equal(next.m, 1);
+  const prev = monthShift(2027, 1, -1);
+  assert.equal(prev.y, 2026);
+  assert.equal(prev.m, 12);
+  // 달력 함수도 같은 경계를 허용한다 (제목만 확인)
+  const calendarMonth = fn("calendarMonth");
+  const now = Date.parse("2026-11-19T12:00:00+09:00");
+  assert.equal(calendarMonth(2027, 1, [], now).title, "2027년 1월");
+});
+
+test("리셋 일정 달관은 요일 헤더와 월 제목과 네비 버튼을 보인다", () => {
+  const { sandbox, html } = makeSandbox();
+  assert.ok(html.includes('id="s-calendar"'), "리셋 일정 섹션이 있어야 해요");
+  assert.ok(html.includes('id="h-calendar"'), "리셋 일정 제목이 있어야 해요");
+  assert.ok(html.includes("리셋 일정"), "리셋 일정 텍스트가 있어야 해요");
+  assert.ok(html.includes("이전 달"), "이전 달 버튼이 있어야 해요");
+  assert.ok(html.includes("다음 달"), "다음 달 버튼이 있어야 해요");
+  assert.ok(html.includes(">오늘<"), "오늘 버튼이 있어야 해요");
+  assert.ok(html.includes('id="calPrev"'), "이전 달 버튼 식별자가 있어야 해요");
+  assert.ok(html.includes('id="calNext"'), "다음 달 버튼 식별자가 있어야 해요");
+  assert.ok(html.includes('id="calToday"'), "오늘 버튼 식별자가 있어야 해요");
+  // 렌더 후 달력 그리드는 요일 헤더와 월 제목을 보인다
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 42, note: "Pro", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 2 * 86400e3))} },
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "claude", metric: "weekly_used_pct", value: 10, note: "", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 86400e3))} },
+     ];
+     latestByService = new Map([["codex", ${NOW - 2 * 60e3}], ["claude", ${NOW - 2 * 60e3}]]);
+     calCursor = null;`,
+    sandbox
+  );
+  vm.runInContext(`renderCalendar(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(body.includes("2026년 11월"), "월 제목이 렌더링되어야 해요");
+  for (const wd of ["일", "월", "화", "수", "목", "금", "토"]) {
+    assert.ok(body.includes(wd), `요일 헤더 ${wd}가 렌더링되어야 해요`);
+  }
+  assert.ok(body.includes('cal-grid'), "달력 그리드가 렌더링되어야 해요");
+});
