@@ -1448,3 +1448,81 @@ test("renderCalendar는 필터 결과가 없으면 조건 문구를 보이고 �
   vm.runInContext(`loaded = false; RECORDS = [{ ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 1, note: "", unit: "%" }]; renderCalendar(${NOW});`, sandbox);
   assert.equal(sandbox.__byId.get("calToolbar")?.hidden, true, "아직 불러오지 않았으면 달력 툴바는 숨겨야 해요");
 });
+
+test("calendarEntries는 최신 사용량을 fmtVal로 usage에 붙인다", () => {
+  const { fn } = makeSandbox();
+  const calendarEntries = fn("calendarEntries");
+  const fmtVal = fn("fmtVal");
+  assert.equal(typeof calendarEntries, "function", "calendarEntries가 전역 함수로 있어야 해요");
+  const now = NOW;
+  const future = now + 86400e3;
+  const pct45 = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: 45, unit: "%" }, rs: future, n: 45 }], now);
+  assert.equal(pct45.length, 1, "미래 초기화 하나는 남아야 해요");
+  assert.equal(pct45[0].usage, "45%", "pct 45는 45%여야 해요");
+  assert.equal(pct45[0].service, "claude", "기존 서비스 필드가 유지되어야 해요");
+  assert.equal(pct45[0].t, future, "기존 시간 필드가 유지되어야 해요");
+  const pct125 = calendarEntries([{ r: { service: "codex", metric: "weekly_used_pct", note: "", value: 12.5, unit: "%" }, rs: future, n: 12.5 }], now);
+  assert.equal(pct125[0].usage, "12.5%", "pct 12.5는 12.5%여야 해요");
+  const nonPctRec = { service: "claude", metric: "tokens_in", value: 1234, unit: "tokens" };
+  const nonPct = calendarEntries([{ r: nonPctRec, rs: future, n: 1234 }], now);
+  assert.equal(nonPct[0].usage, fmtVal(nonPctRec), "비퍼센트는 fmtVal과 같아야 해요");
+  assert.ok(String(nonPct[0].usage).includes("tokens"), "단위가 포함되어야 해요");
+  const missing = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: null, unit: "%" }, rs: future, n: NaN }], now);
+  assert.equal(missing.length, 1, "값이 없어도 미래 초기화면 남아야 해요");
+  assert.equal(missing[0].usage, "—", "없는 값은 —여야 해요");
+  const sameRec = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: 45, unit: "%" }, rs: future, n: 99 }], now);
+  assert.equal(sameRec[0].usage, "45%", "초기화 시각과 같은 기록의 값으로 usage를 구해야 해요");
+  const nonFinite = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: "abc", unit: "%" }, rs: future, n: NaN }], now);
+  assert.equal(nonFinite[0].usage, "—", "pct 비유한 값은 —여야 해요");
+  const filtered = calendarEntries([
+    { r: { service: "a", metric: "weekly_used_pct", note: "", value: 10, unit: "%" }, rs: now - 3600e3, n: 10 },
+    { r: { service: "b", metric: "weekly_used_pct", note: "", value: 0, unit: "%" }, rs: future, n: 0 },
+    { r: { service: "c", metric: "weekly_used_pct", note: "", value: 5, unit: "%" }, rs: null, n: 5 },
+    { r: { service: "d", metric: "weekly_used_pct", note: "", value: 30, unit: "%" }, rs: future, n: 30 },
+  ], now);
+  assert.equal(filtered.length, 1, "과거 초기화와 0과 초기화 없음은 그대로 제외되어야 해요");
+  assert.equal(filtered[0].service, "d");
+  assert.equal(filtered[0].usage, "30%");
+});
+
+test("renderCalendar는 HH:MM 뒤에 cal-pct 사용량을 보이고 title에 포함한다", () => {
+  const { sandbox, html, fn } = makeSandbox();
+  const fmtHM = fn("fmtHM");
+  assert.equal(typeof fmtHM, "function", "fmtHM이 있어야 해요");
+  const resetClaude = NOW + 2 * 86400e3;
+  const resetCodex = NOW + 86400e3;
+  const hmClaude = fmtHM(resetClaude);
+  const hmCodex = fmtHM(resetCodex);
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "claude", metric: "weekly_used_pct", value: 45, note: "", unit: "%", reset_at: ${JSON.stringify(KST(resetClaude))} },
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 12.5, note: "Pro", unit: "%", reset_at: ${JSON.stringify(KST(resetCodex))} },
+     ];
+     latestByService = new Map([["claude", ${NOW - 2 * 60e3}], ["codex", ${NOW - 2 * 60e3}]]);
+     CF.k = [];
+     calCursor = null;`,
+    sandbox
+  );
+  vm.runInContext(`renderCalendar(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(body.includes('class="cal-pct"'), "cal-pct 스팬이 있어야 해요");
+  assert.ok(body.includes('class="cal-pct">45%</span>'), "45% 사용량이 cal-pct 안에 있어야 해요");
+  assert.ok(body.includes('class="cal-pct">12.5%</span>'), "12.5% 사용량이 cal-pct 안에 있어야 해요");
+  assert.ok(body.indexOf(hmClaude) !== -1, "HH:MM이 렌더링되어야 해요");
+  assert.ok(body.indexOf(hmClaude) < body.indexOf('class="cal-pct">45%'), "사용량은 HH:MM 뒤에 있어야 해요");
+  assert.ok(body.includes(`title="Claude 주간 ${hmClaude} 45%"`), `title에 사용량이 포함되어야 해요: ${body.slice(0, 200)}`);
+  assert.ok(body.includes(`title="Codex 주간 ${hmCodex} 12.5% · Pro"`), `메모가 있을 때 title에 사용량과 메모가 포함되어야 해요: ${body.slice(0, 300)}`);
+  assert.ok(html.includes(".cal-pct { white-space:nowrap; font-weight:700; color:var(--ink); margin-left:3px; font-variant-numeric:tabular-nums }"), "cal-pct CSS가 있어야 해요");
+  const scripts = extractScripts(html);
+  assert.ok(scripts.length >= 1, "인라인 스크립트를 찾지 못했어요");
+  for (let i = 0; i < scripts.length; i++) {
+    assert.doesNotThrow(() => new Function(scripts[i]), `스크립트 #${i + 1} 구문 오류`);
+  }
+  vm.runInContext(`CF.k = ["claude|weekly_used_pct|"]; renderCalendar(${NOW});`, sandbox);
+  const narrowed = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(narrowed.includes("Claude"), "필터로 고른 Claude가 남아 있어야 해요");
+  assert.ok(narrowed.includes('class="cal-pct">45%</span>'), "필터로 고른 항목의 사용량이 남아 있어야 해요");
+  assert.ok(!narrowed.includes("Codex"), "필터에서 빠진 Codex는 없어야 해요");
+  assert.ok(!narrowed.includes('class="cal-pct">12.5%'), "필터에서 빠진 사용량은 없어야 해요");
+});
