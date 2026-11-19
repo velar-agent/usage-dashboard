@@ -1295,6 +1295,12 @@ function renderTrends() {
   }
   have.forEach(c => c.remove());
 }
+// Antigravity는 미사용 0% 한도에 대해 조회 시점 기준 now+5h / now+7d 롤링 리셋을 반환해 조회할 때마다 밀리므로 그 경우만 숨긴다. 다른 서비스는 고정 리셋이라 0%도 그대로 보인다.
+const hidesResetAtZero = r => {
+  if (!r) return false;
+  const svc = r.service || (r.key ? String(r.key).split("|")[0] : "") || (Array.isArray(r.rows) && r.rows.length ? r.rows[0].service : "");
+  return String(svc || "").toLowerCase() === "antigravity";
+};
 function latestFutureReset(s, now) {
   // 시리즈의 최신 기록(ts 최대)의 초기화 시각이 미래이면 그 값, 아니면 null.
   let latest = null, latestTs = null;
@@ -1304,7 +1310,7 @@ function latestFutureReset(s, now) {
     if (latestTs === null || t > latestTs) { latestTs = t; latest = r; }
   }
   if (!latest) return null;
-  if (num(latest.value) === 0) return null;
+  if (num(latest.value) === 0 && (hidesResetAtZero(latest) || hidesResetAtZero(s))) return null;
   const cand = tms(latest.reset_at);
   return cand !== null && cand > now ? cand : null;
 }
@@ -1331,7 +1337,7 @@ function calendarEntries(seriesList, now) {
     const rs = item.rs !== undefined && item.rs !== null ? item.rs : tms(r.reset_at);
     const n = item.n !== undefined && item.n !== null ? item.n : num(r.value);
     if (rs === null || rs === undefined || !Number.isFinite(rs) || rs <= now) continue;
-    if (n === 0) continue;
+    if (n === 0 && hidesResetAtZero(r)) continue;
     const nr = num(r.value);
     const usage = isPctRec(r) && !Number.isFinite(nr) ? "—" : fmtVal(r);
     const st = item.st !== undefined && item.st !== null ? item.st : (isPctRec(r) ? statusOf(num(r.value)) : "na");

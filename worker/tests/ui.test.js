@@ -1006,7 +1006,7 @@ test("한도 목록 1·2열은 내용 너비로 좁히고 사용률 열이 남�
   assert.ok(/@media\s*\(max-width:719px\)[\s\S]*\.lim-list td:nth-child\(2\)[^\{]*\{[^}]*width\s*:\s*auto/.test(html), "모바일에서는 2열 셀 width:auto 여야 해요");
 });
 
-test("최신 기록값 0이면 미래 초기화로 창을 넓히지 않는다", () => {
+test("antigravity 최신 값이 0이면 미래 초기화를 숨긴다", () => {
   const { fn } = makeSandbox();
   const chartWindow = fn("chartWindow");
   const buildChartSvg = fn("buildChartSvg");
@@ -1018,29 +1018,38 @@ test("최신 기록값 0이면 미래 초기화로 창을 넓히지 않는다", 
     color: "var(--s1)",
     dash: "",
     rows: [
-      { ts: KST(NOW - firstAgo), value: 10, reset_at: KST(resetMs) },
-      { ts: KST(NOW - 60e3), value: latestValue, reset_at: KST(resetMs) },
+      { ts: KST(NOW - firstAgo), value: 10, service: svc, reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latestValue, service: svc, reset_at: KST(resetMs) },
     ],
   });
   const resetCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length;
   const weekCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length;
   const win7 = chartWindow("7d", NOW, NOW - 7 * DAY);
-  // 0인 시리즈(muse): 창 안 미래 초기화라도 선이 없다.
-  const zero = mk("muse", 0, NOW + 2 * DAY);
-  assert.equal(latestFutureReset(zero, NOW), null, "최신 0이면 latestFutureReset은 null 이야");
+  // 0인 시리즈(antigravity): 창 안 미래 초기화라도 선이 없다.
+  const zero = mk("antigravity", 0, NOW + 2 * DAY);
+  assert.equal(latestFutureReset(zero, NOW), null, "antigravity 최신 0이면 latestFutureReset은 null 이야");
   const outZero = buildChartSvg({ vis: [zero], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
-  assert.equal(resetCount(outZero.inner), 0, "최신 0이면 초기화 선이 없어야 해요");
-  assert.equal(weekCount(outZero.inner), 0, "최신 0이면 -7일 선도 없어야 해요");
-  assert.equal((outZero.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "최신 0이면 점선이 전혀 없어야 해요");
+  assert.equal(resetCount(outZero.inner), 0, "antigravity 최신 0이면 초기화 선이 없어야 해요");
+  assert.equal(weekCount(outZero.inner), 0, "antigravity 최신 0이면 -7일 선도 없어야 해요");
+  assert.equal((outZero.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "antigravity 최신 0이면 점선이 전혀 없어야 해요");
+  // 0인 codex: 같은 0이어도 숨기지 않고 선이 있다.
+  const zeroCodex = mk("codex", 0, NOW + 2 * DAY);
+  assert.equal(latestFutureReset(zeroCodex, NOW), NOW + 2 * DAY, "codex 최신 0이면 미래 초기화를 돌려줘야 해요");
+  const outZeroCodex = buildChartSvg({ vis: [zeroCodex], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outZeroCodex.inner), 1, "codex 0이면 초기화 선이 하나 있어야 해요");
+  assert.equal(weekCount(outZeroCodex.inner), 1, "codex 0이면 -7일 선이 하나 있어야 해요");
   // 7인 시리즈(codex): 같은 초기화에서 선이 있다.
   const seven = mk("codex", 7, NOW + 2 * DAY);
   assert.equal(latestFutureReset(seven, NOW), NOW + 2 * DAY, "최신 7이면 미래 초기화를 돌려줘야 해요");
   const outSeven = buildChartSvg({ vis: [seven], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
   assert.equal(resetCount(outSeven.inner), 1, "최신 7이면 초기화 선이 하나 있어야 해요");
   assert.equal(weekCount(outSeven.inner), 1, "최신 7이면 -7일 선이 하나 있어야 해요");
-  // all 창 farthestReset: 0은 창을 넓히지 않고 7은 넓힌다.
+  // antigravity 양수: 0이 아니면 그대로 보인다.
+  const antiPos = mk("antigravity", 7, NOW + 2 * DAY);
+  assert.equal(latestFutureReset(antiPos, NOW), NOW + 2 * DAY, "antigravity 7이면 미래 초기화를 돌려줘야 해요");
+  // all 창 farthestReset: antigravity 0은 창을 넓히지 않고 7은 넓힌다.
   const earliest = NOW - 4 * DAY, resetFar = NOW + 6 * DAY;
-  const zeroFar = mk("muse", 0, resetFar, 4 * DAY);
+  const zeroFar = mk("antigravity", 0, resetFar, 4 * DAY);
   const sevenFar = mk("codex", 7, resetFar, 4 * DAY);
   const farZero = latestFutureReset(zeroFar, NOW);
   const farSeven = latestFutureReset(sevenFar, NOW);
@@ -1070,8 +1079,18 @@ test("주간 시리즈는 7d·all에서 -7일 선을 함께 그린다", () => {
     color: "var(--s1)",
     dash: "",
     rows: [
-      { ts: KST(NOW - firstAgo), value: 10, metric: "weekly_used_pct", reset_at: KST(resetMs) },
-      { ts: KST(NOW - 60e3), value: latest, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - firstAgo), value: 10, service: "codex", metric: "weekly_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latest, service: "codex", metric: "weekly_used_pct", reset_at: KST(resetMs) },
+    ],
+  });
+  const mkAntiWeekly = (resetMs, firstAgo = 6 * DAY, latest = 0) => ({
+    key: "antigravity|weekly_used_pct|",
+    label: "주간",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - firstAgo), value: 10, service: "antigravity", metric: "weekly_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latest, service: "antigravity", metric: "weekly_used_pct", reset_at: KST(resetMs) },
     ],
   });
   const mkSession = (resetMs) => ({
@@ -1132,10 +1151,14 @@ test("주간 시리즈는 7d·all에서 -7일 선을 함께 그린다", () => {
   const outNarrow = buildChartSvg({ vis: [mkWeekly(NOW + 2 * DAY, 3 * DAY)], now: NOW, t0: narrowAll.t0, t1: narrowAll.t1, W, H, range: "all" });
   assert.equal(resetCount(outNarrow.inner), 1, "좁은 창 안 reset은 있다");
   assert.equal(weekCount(outNarrow.inner), 0, "-7일이 창 밖이면 그리지 않아야 해요");
-  // 0 사용 주간은 7d에서도 둘 다 없다.
-  const outZero = buildChartSvg({ vis: [mkWeekly(NOW + 2 * DAY, 6 * DAY, 0)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
-  assert.equal(resetCount(outZero.inner), 0, "0이면 초기화 선이 없어야 해요");
-  assert.equal(weekCount(outZero.inner), 0, "0이면 -7일 선이 없어야 해요");
+  // antigravity 0 사용 주간은 7d에서도 둘 다 없다.
+  const outZeroAnti = buildChartSvg({ vis: [mkAntiWeekly(NOW + 2 * DAY, 6 * DAY, 0)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outZeroAnti.inner), 0, "antigravity 0이면 초기화 선이 없어야 해요");
+  assert.equal(weekCount(outZeroAnti.inner), 0, "antigravity 0이면 -7일 선이 없어야 해요");
+  // codex 0 사용 주간은 그대로 보인다.
+  const outZeroCodex = buildChartSvg({ vis: [mkWeekly(NOW + 2 * DAY, 6 * DAY, 0)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(outZeroCodex.inner), 1, "codex 0이면 초기화 선이 있어야 해요");
+  assert.equal(weekCount(outZeroCodex.inner), 1, "codex 0이면 -7일 선이 있어야 해요");
   // weekStart 불리언 그리기 형식도 같은 동작이다.
   const outBool = buildChartSvg({ vis: [mkWeekly(reset7)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, weekStart: true });
   assert.equal(weekCount(outBool.inner), 1, "weekStart true면 -7일 선이 있어야 해요");
@@ -1159,7 +1182,7 @@ test("html 동기화와 스크립트 구문이 유지된다", () => {
   assert.equal(out.status ?? 0, 0, "html.js가 server.py와 다릅니다");
 });
 
-test("calendarEntries는 과거 초기화와 값 0과 초기화 없음 시리즈를 제외하고 시간순 정렬한다", () => {
+test("calendarEntries는 과거 초기화와 antigravity 0과 초기화 없음 시리즈를 제외하고 시간순 정렬한다", () => {
   const { fn } = makeSandbox();
   const calendarEntries = fn("calendarEntries");
   assert.equal(typeof calendarEntries, "function", "calendarEntries가 전역 함수로 있어야 해요");
@@ -1168,12 +1191,12 @@ test("calendarEntries는 과거 초기화와 값 0과 초기화 없음 시리즈
   const list = [
     { r: { service: "codex", metric: "weekly_used_pct", note: "Pro", reset_at: KST(future), value: 10 }, rs: future, n: 10, pct: true },
     { r: { service: "claude", metric: "weekly_used_pct", note: "", reset_at: KST(now - 3600e3), value: 20 }, rs: now - 3600e3, n: 20, pct: true },
-    { r: { service: "muse", metric: "weekly_used_pct", note: "", reset_at: KST(future + 3600e3), value: 0 }, rs: future + 3600e3, n: 0, pct: true },
+    { r: { service: "antigravity", metric: "weekly_used_pct", note: "", reset_at: KST(future + 3600e3), value: 0 }, rs: future + 3600e3, n: 0, pct: true },
     { r: { service: "grok", metric: "weekly_used_pct", note: "", reset_at: null, value: 5 }, rs: null, n: 5, pct: true },
     { r: { service: "gemini", metric: "weekly_used_pct", note: "X", reset_at: KST(future - 3600e3), value: 7 }, rs: future - 3600e3, n: 7, pct: true },
   ];
   const out = calendarEntries(list, now);
-  assert.equal(out.length, 2, "미래이고 값 0이 아닌 것만 남아야 해요");
+  assert.equal(out.length, 2, "antigravity만 0을 숨기고 나머지는 미래만 남아야 해요");
   assert.equal(out[0].t, future - 3600e3, "가장 이른 미래가 먼저여야 해요");
   assert.equal(out[1].t, future, "정렬 순서가 시간순이어야 해요");
   assert.equal(out[0].service, "gemini");
@@ -1476,13 +1499,20 @@ test("calendarEntries는 최신 사용량을 fmtVal로 usage에 붙인다", () =
   assert.equal(nonFinite[0].usage, "—", "pct 비유한 값은 —여야 해요");
   const filtered = calendarEntries([
     { r: { service: "a", metric: "weekly_used_pct", note: "", value: 10, unit: "%" }, rs: now - 3600e3, n: 10 },
-    { r: { service: "b", metric: "weekly_used_pct", note: "", value: 0, unit: "%" }, rs: future, n: 0 },
+    { r: { service: "antigravity", metric: "weekly_used_pct", note: "", value: 0, unit: "%" }, rs: future, n: 0 },
     { r: { service: "c", metric: "weekly_used_pct", note: "", value: 5, unit: "%" }, rs: null, n: 5 },
     { r: { service: "d", metric: "weekly_used_pct", note: "", value: 30, unit: "%" }, rs: future, n: 30 },
   ], now);
-  assert.equal(filtered.length, 1, "과거 초기화와 0과 초기화 없음은 그대로 제외되어야 해요");
+  assert.equal(filtered.length, 1, "과거 초기화와 antigravity 0과 초기화 없음만 제외해야 해요");
   assert.equal(filtered[0].service, "d");
   assert.equal(filtered[0].usage, "30%");
+  // 비-antigravity 0은 포함된다.
+  const withZero = calendarEntries([
+    { r: { service: "b", metric: "weekly_used_pct", note: "", value: 0, unit: "%" }, rs: future, n: 0 },
+    { r: { service: "d", metric: "weekly_used_pct", note: "", value: 30, unit: "%" }, rs: future, n: 30 },
+  ], now);
+  assert.equal(withZero.length, 2, "비-antigravity 0은 포함되어야 해요");
+  assert.ok(withZero.some(e => e.service === "b" && e.usage === "0%"), "b 0% 항목이 0%로 포함되어야 해요");
 });
 
 test("renderCalendar는 HH:MM 뒤에 cal-pct 사용량을 보이고 title에 포함한다", () => {
@@ -1612,5 +1642,85 @@ test("renderCalendar는 HH:MM과 사용량 사이에 공백을 두고 상태 색
     { encoding: "utf8", cwd: REPO_ROOT }
   );
   assert.equal(out.status ?? 0, 0, "html.js가 server.py와 다릅니다");
+});
+
+test("latestFutureReset은 antigravity 0만 숨기고 codex 0과 antigravity 양수는 보인다", () => {
+  const { fn } = makeSandbox();
+  const latestFutureReset = fn("latestFutureReset");
+  assert.equal(typeof latestFutureReset, "function", "latestFutureReset이 있어야 해요");
+  const DAY = 86400e3;
+  const mk = (svc, latestValue, resetMs) => ({
+    key: `${svc}|weekly_used_pct|`,
+    label: "주간",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * DAY), value: 10, service: svc, reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latestValue, service: svc, reset_at: KST(resetMs) },
+    ],
+  });
+  const resetMs = NOW + 2 * DAY;
+  const codexZero = mk("codex", 0, resetMs);
+  assert.equal(latestFutureReset(codexZero, NOW), resetMs, "codex 0은 미래 초기화를 돌려줘야 해요");
+  const antiZero = mk("antigravity", 0, resetMs);
+  assert.equal(latestFutureReset(antiZero, NOW), null, "antigravity 0은 null이어야 해요");
+  const antiPos = mk("antigravity", 5, resetMs);
+  assert.equal(latestFutureReset(antiPos, NOW), resetMs, "antigravity 5는 미래 초기화를 돌려줘야 해요");
+});
+
+test("calendarEntries는 codex 0%를 포함하고 antigravity 0%는 제외한다", () => {
+  const { fn } = makeSandbox();
+  const calendarEntries = fn("calendarEntries");
+  assert.equal(typeof calendarEntries, "function", "calendarEntries가 있어야 해요");
+  const now = NOW;
+  const future = now + 86400e3;
+  const list = [
+    { r: { service: "codex", metric: "weekly_used_pct", note: "", value: 0, unit: "%", reset_at: KST(future) }, rs: future, n: 0 },
+    { r: { service: "antigravity", metric: "weekly_used_pct", note: "", value: 0, unit: "%", reset_at: KST(future) }, rs: future, n: 0 },
+  ];
+  const out = calendarEntries(list, now);
+  assert.equal(out.length, 1, "codex 0만 남아야 해요");
+  assert.equal(out[0].service, "codex", "codex 0이 남아 있어야 해요");
+  assert.equal(out[0].usage, "0%", "codex 0의 usage는 0%여야 해요");
+});
+
+test("codex 0% 주간은 7d·all에서 리셋과 -7일선을 그리고 antigravity 0%는 그리지 않는다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const DAY = 86400e3, W = 400, H = 200;
+  const resetCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.7"/g) || []).length;
+  const weekCount = (inner) => (inner.match(/stroke-dasharray="1\.5 3"[^>]*opacity="\.4"/g) || []).length;
+  const mkSeries = (svc, resetMs, latest) => ({
+    key: `${svc}|weekly_used_pct|`,
+    label: "주간",
+    color: "var(--s1)",
+    dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * DAY), value: 10, service: svc, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+      { ts: KST(NOW - 60e3), value: latest, service: svc, metric: "weekly_used_pct", reset_at: KST(resetMs) },
+    ],
+  });
+  const resetMs = NOW + 2 * DAY;
+  const weekMs = resetMs - 7 * DAY;
+  // 7d 창
+  const win7 = chartWindow("7d", NOW, NOW - 7 * DAY);
+  const codexZero7 = buildChartSvg({ vis: [mkSeries("codex", resetMs, 0)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(codexZero7.inner), 1, "7d codex 0은 초기화 선 하나");
+  assert.equal(weekCount(codexZero7.inner), 1, "7d codex 0은 -7일 선 하나");
+  assert.ok(codexZero7.inner.includes(`<line x1="${codexZero7.X(resetMs)}"`), "codex 0 초기화 위치");
+  assert.ok(codexZero7.inner.includes(`<line x1="${codexZero7.X(weekMs)}"`), "codex 0 -7일 위치");
+  const antiZero7 = buildChartSvg({ vis: [mkSeries("antigravity", resetMs, 0)], now: NOW, t0: win7.t0, t1: win7.t1, W, H, range: "7d" });
+  assert.equal(resetCount(antiZero7.inner), 0, "7d antigravity 0은 초기화 선 없음");
+  assert.equal(weekCount(antiZero7.inner), 0, "7d antigravity 0은 -7일 선 없음");
+  // all 창(넓은 창)
+  const earliest = NOW - 6 * DAY;
+  const winAll = chartWindow("all", NOW, earliest, resetMs);
+  const codexZeroAll = buildChartSvg({ vis: [mkSeries("codex", resetMs, 0)], now: NOW, t0: winAll.t0, t1: winAll.t1, W, H, range: "all" });
+  assert.equal(resetCount(codexZeroAll.inner), 1, "all codex 0은 초기화 선 하나");
+  assert.equal(weekCount(codexZeroAll.inner), 1, "all codex 0은 -7일 선 하나");
+  const antiZeroAll = buildChartSvg({ vis: [mkSeries("antigravity", resetMs, 0)], now: NOW, t0: winAll.t0, t1: winAll.t1, W, H, range: "all" });
+  assert.equal(resetCount(antiZeroAll.inner), 0, "all antigravity 0은 초기화 선 없음");
+  assert.equal(weekCount(antiZeroAll.inner), 0, "all antigravity 0은 -7일 선 없음");
 });
 
