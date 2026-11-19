@@ -1541,8 +1541,8 @@ test("renderCalendar는 HH:MM 뒤에 cal-pct 사용량을 보이고 title에 포
   assert.ok(body.includes('class="cal-pct" data-s="ok">12.5%</span>'), "12.5% 사용량이 cal-pct 안에 있어야 해요");
   assert.ok(body.indexOf(hmClaude) !== -1, "HH:MM이 렌더링되어야 해요");
   assert.ok(body.indexOf(hmClaude) < body.indexOf('class="cal-pct" data-s="ok">45%'), "사용량은 HH:MM 뒤에 있어야 해요");
-  assert.ok(body.includes(`title="Claude 주간 ${hmClaude} 45%"`), `title에 사용량이 포함되어야 해요: ${body.slice(0, 200)}`);
-  assert.ok(body.includes(`title="Codex 주간 ${hmCodex} 12.5% · Pro"`), `메모가 있을 때 title에 사용량과 메모가 포함되어야 해요: ${body.slice(0, 300)}`);
+  assert.ok(body.includes(`title="Claude 주간 ${hmClaude} - 45%"`), `title에 사용량이 포함되어야 해요: ${body.slice(0, 200)}`);
+  assert.ok(body.includes(`title="Codex 주간 ${hmCodex} - 12.5% · Pro"`), `메모가 있을 때 title에 사용량과 메모가 포함되어야 해요: ${body.slice(0, 300)}`);
   assert.ok(html.includes(".cal-pct { white-space:nowrap; font-weight:400; font-variant-numeric:tabular-nums }"), "cal-pct CSS가 있어야 해요");
   const scripts = extractScripts(html);
   assert.ok(scripts.length >= 1, "인라인 스크립트를 찾지 못했어요");
@@ -1607,12 +1607,12 @@ test("renderCalendar는 HH:MM과 사용량 사이에 공백을 두고 상태 색
   );
   vm.runInContext(`renderCalendar(${NOW});`, sandbox);
   const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
-  assert.ok(body.includes('20:00 <span class="cal-pct" data-s="ok">45%</span>'), "20:00과 45% 사이에 공백이 있어야 해요");
-  // 엔트리 텍스트는 태그를 빼면 "Claude 주간 20:00 45%"가 된다 (공백 포함)
-  const entryMatch = body.match(/Claude 주간 20:00\s*<span class="cal-pct" data-s="ok">45%<\/span>/);
-  assert.ok(entryMatch, "엔트리 텍스트가 Claude 주간 20:00 45% 형태여야 해요");
+  assert.ok(body.includes('20:00 - <span class="cal-pct" data-s="ok">45%</span>'), "20:00과 45% 사이에 - 구분자가 있어야 해요");
+  // 엔트리 텍스트는 태그를 빼면 "Claude 주간 20:00 - 45%"가 된다 (공백 포함)
+  const entryMatch = body.match(/Claude 주간 20:00 - <span class="cal-pct" data-s="ok">45%<\/span>/);
+  assert.ok(entryMatch, "엔트리 텍스트가 Claude 주간 20:00 - 45% 형태여야 해요");
   const textOnly = body.replace(/<[^>]+>/g, "").replace(/ +/g, " ");
-  assert.ok(textOnly.includes("Claude 주간 20:00 45%"), "태그를 빼면 엔트리 텍스트가 Claude 주간 20:00 45%여야 해요");
+  assert.ok(textOnly.includes("Claude 주간 20:00 - 45%"), "태그를 빼면 엔트리 텍스트가 Claude 주간 20:00 - 45%여야 해요");
   // CSS: cal-pct 규칙에 볼드가 없고 상태별 색이 있다
   const calPctMatch = html.match(/\.cal-pct\s*\{[^}]*\}/);
   assert.ok(calPctMatch, "cal-pct 규칙이 있어야 해요");
@@ -1642,6 +1642,69 @@ test("renderCalendar는 HH:MM과 사용량 사이에 공백을 두고 상태 색
     { encoding: "utf8", cwd: REPO_ROOT }
   );
   assert.equal(out.status ?? 0, 0, "html.js가 server.py와 다릅니다");
+});
+
+test("renderCalendar 엔트리는 HH:MM - 사용량 형식이고 구분자는 보통 색으로 나온다", () => {
+  const { sandbox, html, fn } = makeSandbox();
+  const fmtHM = fn("fmtHM");
+  const resetAt = Date.parse("2026-11-20T20:00:00+09:00");
+  assert.equal(fmtHM(resetAt), "20:00", "20:00으로 고정되어야 해요");
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "claude", metric: "weekly_used_pct", value: 45, note: "", unit: "%", reset_at: ${JSON.stringify(KST(resetAt))} },
+     ];
+     latestByService = new Map([["claude", ${NOW - 2 * 60e3}]]);
+     CF.k = [];
+     calCursor = null;`,
+    sandbox
+  );
+  vm.runInContext(`renderCalendar(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  // 요구된 정확한 HTML 조각: " - "가 cal-pct 스팬 밖에 텍스트 노드로 나온다.
+  assert.ok(body.includes('20:00 - <span class="cal-pct" data-s="ok">45%</span>'), "엔트리 HTML에 20:00 - <span class=\"cal-pct\" data-s=\"ok\">45%</span>가 있어야 해요");
+  // 구분자는 cal-pct 스팬 안에 있으면 안 된다.
+  assert.ok(!body.includes('<span class="cal-pct" data-s="ok"> - 45%'), "구분자는 cal-pct 스팬 안에 있으면 안 돼요");
+  assert.ok(!body.includes('> - 45%<'), "구분자가 스팬 안에 들어가면 안 돼요");
+  // .cal-pct는 상태 색 규칙 외에 자체 색이 없어야 한다 (일반 잉크를 상속함).
+  const calPctMatch = html.match(/\.cal-pct\s*\{([^}]*)\}/);
+  assert.ok(calPctMatch, ".cal-pct 규칙이 있어야 해요");
+  assert.ok(!/color\s*:/.test(calPctMatch[1]), ".cal-pct 기본 규칙에 color가 있으면 안 돼요");
+  // 상태별 색 규칙은 유지된다.
+  assert.ok(html.includes('.cal-pct[data-s="ok"]{color:var(--ok)}'), "ok 상태 색 규칙이 있어야 해요");
+  assert.ok(html.includes('.cal-pct[data-s="warn"]{color:var(--warn)}'), "warn 상태 색 규칙이 있어야 해요");
+  assert.ok(html.includes('.cal-pct[data-s="bad"]{color:var(--bad)}'), "bad 상태 색 규칙이 있어야 해요");
+  assert.ok(html.includes('.cal-pct[data-s="na"]{color:var(--muted)}'), "na 상태 색 규칙이 있어야 해요");
+});
+
+test("cal-entry 글자 크기가 읽기 편하게 커져 있고 cal-pct는 볼드가 아니다", () => {
+  const { html } = makeSandbox();
+  // 데스크톱 .cal-entry: font-size:13px; line-height:18px
+  const entryBodies = [...html.matchAll(/\.cal-entry\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.equal(entryBodies.length, 2, "데스크톱·모바일 .cal-entry 규칙이 두 개 있어야 해요");
+  assert.match(entryBodies[0], /font-size\s*:\s*13px/, "데스크톱 cal-entry는 13px여야 해요");
+  assert.match(entryBodies[0], /line-height\s*:\s*18px/, "데스크톱 cal-entry는 18px여야 해요");
+  // 모바일(max-width:719px) .cal-entry: font-size:11px; line-height:14px
+  const mediaIdx = html.indexOf("@media (max-width:719px)");
+  assert.ok(mediaIdx !== -1, "모바일 미디어 쿼리가 있어야 해요");
+  const firstEntryIdx = html.indexOf(".cal-entry");
+  const secondEntryIdx = html.indexOf(".cal-entry", firstEntryIdx + 1);
+  assert.ok(secondEntryIdx > mediaIdx, "두 번째 cal-entry는 모바일 미디어쿼리 안에 있어야 해요");
+  assert.match(entryBodies[1], /font-size\s*:\s*11px/, "모바일 cal-entry는 11px여야 해요");
+  assert.match(entryBodies[1], /line-height\s*:\s*14px/, "모바일 cal-entry는 14px여야 해요");
+  // 데스크톱에 예전 작은 값(11px/15px)이 남아 있으면 안 된다. 모바일 11px/14px와 구분한다.
+  assert.ok(!/font-size\s*:\s*11px/.test(entryBodies[0]), "데스크톱 cal-entry에 예전 11px이 남아 있으면 안 돼요");
+  assert.ok(!/line-height\s*:\s*15px/.test(entryBodies[0]), "데스크톱 cal-entry에 예전 15px이 남아 있으면 안 돼요");
+  // 셀이 가로로 넘치지 않게 감싸기가 유지된다.
+  assert.match(entryBodies[0], /overflow-wrap\s*:\s*anywhere/, "cal-entry는 overflow-wrap:anywhere로 감싸야 해요");
+  const calDay = html.match(/\.cal-day\s*\{([^}]*)\}/);
+  assert.ok(calDay, ".cal-day 규칙이 있어야 해요");
+  assert.match(calDay[1], /min-width\s*:\s*0/, ".cal-day는 min-width:0이어야 해요");
+  // .cal-pct는 여전히 볼드가 아니다.
+  const calPct = html.match(/\.cal-pct\s*\{([^}]*)\}/);
+  assert.ok(calPct, ".cal-pct 규칙이 있어야 해요");
+  assert.match(calPct[1], /font-weight\s*:\s*400/, "cal-pct는 font-weight:400이어야 해요");
+  assert.ok(!/font-weight\s*:\s*700/.test(calPct[1]), "cal-pct에 볼드가 있으면 안 돼요");
 });
 
 test("latestFutureReset은 antigravity 0만 숨기고 codex 0과 antigravity 양수는 보인다", () => {

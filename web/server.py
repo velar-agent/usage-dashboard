@@ -541,7 +541,7 @@ section:first-of-type { margin-top:0; }
 .cal-day[data-today="1"] { background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
 .cal-num { font-size:12px; line-height:16px; font-weight:700; color:var(--ink-2); }
 .cal-day[data-today="1"] .cal-num { color:var(--accent); }
-.cal-entry { font-size:11px; line-height:15px; color:var(--ink-2); border-left:3px solid var(--accent); padding-left:5px; overflow-wrap:anywhere; word-break:keep-all; }
+.cal-entry { font-size:13px; line-height:18px; color:var(--ink-2); border-left:3px solid var(--accent); padding-left:5px; overflow-wrap:anywhere; word-break:keep-all; }
 .cal-pct { white-space:nowrap; font-weight:400; font-variant-numeric:tabular-nums }
 .cal-pct[data-s="ok"]{color:var(--ok)} .cal-pct[data-s="warn"]{color:var(--warn)} .cal-pct[data-s="bad"]{color:var(--bad)} .cal-pct[data-s="na"]{color:var(--muted)}
 @media (max-width:719px){
@@ -1423,8 +1423,8 @@ function renderCalendar(now = Date.now()) {
         const label = `${esc(svcName(e.service))} ${esc(metricLabel(e.metric))} ${fmtHM(e.t)}`;
         const usage = e.usage !== undefined && e.usage !== null ? e.usage : "—";
         const st = e.st !== undefined && e.st !== null ? e.st : "na";
-        const titleAttr = ` title="${label} ${esc(usage)}${e.note ? " · " + esc(e.note) : ""}"`;
-        return `<div class="cal-entry"${titleAttr}>${label} <span class="cal-pct" data-s="${esc(st)}">${esc(usage)}</span></div>`;
+        const titleAttr = ` title="${label} - ${esc(usage)}${e.note ? " · " + esc(e.note) : ""}"`;
+        return `<div class="cal-entry"${titleAttr}>${label} - <span class="cal-pct" data-s="${esc(st)}">${esc(usage)}</span></div>`;
       }).join("");
       cells += `<div class="cal-day"${outAttr}${todayAttr}><div class="cal-num">${day.d}</div>${entryHtml}</div>`;
     }
