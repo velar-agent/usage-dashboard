@@ -1363,7 +1363,7 @@ test("리셋 일정 툴바와 한도 필터가 함께 있다", () => {
   assert.ok(html.includes('id="calSeriesL"'), "달력 필터 라벨 식별자가 있어야 해요");
   assert.ok(html.includes('id="calSeries"'), "달력 필터 드롭다운 식별자가 있어야 해요");
   assert.ok(html.includes("서비스 · 지표 · 메모"), "달력 필터 라벨 문구가 있어야 해요");
-  const calSection = html.slice(html.indexOf('id="s-calendar"'), html.indexOf('id="s-trends"'));
+  const calSection = html.slice(html.indexOf('id="s-calendar"'), html.indexOf('id="s-limits"'));
   assert.ok(calSection.includes('id="calToolbar"'), "달력 툴바는 s-calendar 섹션 안에 있어야 해요");
   assert.ok(calSection.includes('id="calSeries"'), "달력 필터는 s-calendar 섹션 안에 있어야 해요");
   assert.ok(calSection.includes("서비스 · 지표 · 메모"), "달력 툴바 라벨은 s-calendar 안에 있어야 해요");
@@ -1387,6 +1387,18 @@ test("리셋 일정 툴바와 한도 필터가 함께 있다", () => {
   assert.ok(scripts.length >= 2, "인라인 스크립트를 찾지 못했어요");
   for (let i = 0; i < scripts.length; i++) {
     assert.doesNotThrow(() => new Function(scripts[i]), `스크립트 #${i + 1} 구문 오류`);
+  }
+});
+
+test("main 섹션 순서는 리셋 일정, 한도 현황, 추이, 최근 기록, 원본 파일이다", () => {
+  const { html } = makeSandbox();
+  const ids = ["s-calendar", "s-limits", "s-trends", "s-records", "s-raw"];
+  const at = ids.map((id) => html.indexOf(`id="${id}"`));
+  for (let i = 0; i < ids.length; i++) {
+    assert.ok(at[i] >= 0, `${ids[i]} 섹션이 있어야 해요`);
+  }
+  for (let i = 1; i < ids.length; i++) {
+    assert.ok(at[i] > at[i - 1], `${ids[i]}는 ${ids[i - 1]} 뒤에 있어야 해요`);
   }
 });
 

@@ -381,6 +381,7 @@ button,select,input { font:inherit; color:inherit; }
 main { padding-top:var(--sp-5); padding-bottom:var(--sp-7); }
 section { margin-top:var(--sp-6); }
 section:first-of-type { margin-top:0; }
+section:first-of-type[hidden] + section { margin-top:0; }
 .sec-h { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--sp-2) var(--sp-4); margin-bottom:var(--sp-3); }
 .sec-h .sub { color:var(--muted); font-size:13px; }
 @media (min-width:640px){ .wrap { padding-inline:var(--sp-5); } }
@@ -734,6 +735,21 @@ td.c-time[data-dup] { color:var(--muted); }
 <main id="main" class="wrap" tabindex="-1">
   <div id="banner"></div>
 
+  <section id="s-calendar" aria-labelledby="h-calendar">
+    <div class="sec-h">
+      <div><h2 class="t-h2" id="h-calendar">리셋 일정</h2><p class="sub" id="calSub">미래 초기화만 KST 달력으로 보여 줘요</p></div>
+      <div class="seg" role="group" aria-label="월 이동">
+        <button type="button" id="calPrev">이전 달</button>
+        <button type="button" id="calNext">다음 달</button>
+        <button type="button" id="calToday">오늘</button>
+      </div>
+    </div>
+    <div class="toolbar lim-tb" id="calToolbar" hidden>
+      <div class="field"><span class="flabel" id="calSeriesL">서비스 · 지표 · 메모</span><details class="msel" id="calSeries" data-k="k" data-st="cal" data-all="모든 한도"><summary aria-labelledby="calSeriesL"><span class="msel-t">모든 한도</span></summary><div class="msel-p" role="group" aria-labelledby="calSeriesL"></div></details></div>
+    </div>
+    <div id="calBody"></div>
+  </section>
+
   <section id="s-limits" aria-labelledby="h-limits">
     <div class="sec-h">
       <div><h2 class="t-h2" id="h-limits">한도 현황</h2><p class="sub" id="limitsSub"></p></div>
@@ -759,21 +775,6 @@ td.c-time[data-dup] { color:var(--muted); }
         <tbody id="limBody"></tbody>
       </table>
     </div>
-  </section>
-
-  <section id="s-calendar" aria-labelledby="h-calendar">
-    <div class="sec-h">
-      <div><h2 class="t-h2" id="h-calendar">리셋 일정</h2><p class="sub" id="calSub">미래 초기화만 KST 달력으로 보여 줘요</p></div>
-      <div class="seg" role="group" aria-label="월 이동">
-        <button type="button" id="calPrev">이전 달</button>
-        <button type="button" id="calNext">다음 달</button>
-        <button type="button" id="calToday">오늘</button>
-      </div>
-    </div>
-    <div class="toolbar lim-tb" id="calToolbar" hidden>
-      <div class="field"><span class="flabel" id="calSeriesL">서비스 · 지표 · 메모</span><details class="msel" id="calSeries" data-k="k" data-st="cal" data-all="모든 한도"><summary aria-labelledby="calSeriesL"><span class="msel-t">모든 한도</span></summary><div class="msel-p" role="group" aria-labelledby="calSeriesL"></div></details></div>
-    </div>
-    <div id="calBody"></div>
   </section>
 
   <section id="s-trends" aria-labelledby="h-trends">
