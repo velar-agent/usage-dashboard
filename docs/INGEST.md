@@ -1,11 +1,11 @@
 # 토큰 사용 기록 보내기 / Posting token usage records
 
-대시보드는 이제 Cloudflare Worker + D1 에서 돌아가요. 로깅 봇은 파일에 쓰는 대신 아래 주소로 **HTTP POST** 하면 돼요.
-The dashboard now runs on a Cloudflare Worker + D1. The logging bot should **POST over HTTP** instead of appending to local files.
+대시보드는 Google VM에서 돌아가고, 데이터 전송은 **https 전용**이에요. 개발(dev)은 `https://usage-dashboard-dev.velar-agent.duckdns.org`, 운영(prod)은 `https://usage-dashboard.velar-agent.duckdns.org`로 보내세요. plain http(`http://`)는 수집기가 거부하고, bare IP(`:80`)로 보낸 `/api/` 요청은 nginx가 403으로 거부해요.
+The dashboard runs on a Google VM and data transfer is **https only**. Send to dev `https://usage-dashboard-dev.velar-agent.duckdns.org` or prod `https://usage-dashboard.velar-agent.duckdns.org`. Plain http is refused by the collector, and `/api/` requests over the bare IP (:80) are answered 403 by nginx.
 
-- 주소 / URL: `https://usage-dashboard.velar-agent.workers.dev/api/ingest`
+- 주소 / URLs: dev `https://usage-dashboard-dev.velar-agent.duckdns.org/api/ingest` · prod `https://usage-dashboard.velar-agent.duckdns.org/api/ingest`
 - 인증 / Auth: 헤더 `Authorization: Bearer <INGEST_KEY>`
-- 키 파일 / Key file (box): `/workspace/token-usage/ingest-key.txt` (권한 600, 채팅·로그에 찍지 마세요 / never print or log it)
+- 키 파일 / Key files (box): dev `/workspace/token-usage/google-ingest-key.txt`, prod `/workspace/token-usage/google-ingest-key-prod.txt` (권한 600, 채팅·로그에 찍지 마세요 / never print or log it)
 - 본문 / Body: `Content-Type: application/json` — 기록 객체 하나, 객체 배열, 또는 `{"records":[...]}`. **한 번에 최대 40건 / max 40 records per request**, 본문 256KB 이하.
 
 ## 필드 / Fields (FORMAT.md 와 같아요 / same as FORMAT.md)
@@ -28,8 +28,8 @@ Records with the same `ts`+`service`+`metric`+`note` are stored once; re-sending
 ## 예 1: 한 건 / one record
 
 ```bash
-curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/ingest \
-  -H "Authorization: Bearer $(cat /workspace/token-usage/ingest-key.txt)" \
+curl -sS -X POST https://usage-dashboard-dev.velar-agent.duckdns.org/api/ingest \
+  -H "Authorization: Bearer $(cat /workspace/token-usage/google-ingest-key.txt)" \
   -H "Content-Type: application/json" \
   -d '{"ts":"2026-11-15T15:20:00+09:00","service":"grok","metric":"weekly_used_pct","value":7,"unit":"%","reset_at":"2026-11-17T15:42:00+09:00","note":"X Premium+","source":"token-usage-logging-bot"}'
 ```
@@ -37,8 +37,8 @@ curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/ingest \
 ## 예 2: 여러 건 / several records
 
 ```bash
-curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/ingest \
-  -H "Authorization: Bearer $(cat /workspace/token-usage/ingest-key.txt)" \
+curl -sS -X POST https://usage-dashboard-dev.velar-agent.duckdns.org/api/ingest \
+  -H "Authorization: Bearer $(cat /workspace/token-usage/google-ingest-key.txt)" \
   -H "Content-Type: application/json" \
   -d '[{"service":"claude","metric":"session_used_pct","value":0,"unit":"%","note":"all models"},
        {"service":"claude","metric":"weekly_used_pct","value":14,"unit":"%","note":"all models","reset_at":"2026-11-17T19:59:59+09:00"}]'
@@ -50,14 +50,14 @@ curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/ingest \
 import json, urllib.request
 from datetime import datetime, timedelta, timezone
 KST = timezone(timedelta(hours=9))
-key = open("/workspace/token-usage/ingest-key.txt").read().strip()
+key = open("/workspace/token-usage/google-ingest-key.txt").read().strip()
 recs = [{"ts": datetime.now(KST).isoformat(timespec="seconds"), "service": "codex",
          "metric": "weekly_used_pct", "value": 36, "unit": "%", "note": "ChatGPT prolite",
          "source": "token-usage-logging-bot"}]
-req = urllib.request.Request("https://usage-dashboard.velar-agent.workers.dev/api/ingest", data=json.dumps(recs).encode(),
+req = urllib.request.Request("https://usage-dashboard-dev.velar-agent.duckdns.org/api/ingest", data=json.dumps(recs).encode(),
       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                "User-Agent": "token-usage-logging-bot/1.0"}, method="POST")
-# 기본 Python-urllib User-Agent는 Cloudflare가 403(error 1010)으로 막아요. UA를 꼭 지정하세요.
+# User-Agent 헤더를 꼭 지정하세요.
 print(urllib.request.urlopen(req, timeout=30).read().decode())
 ```
 
@@ -71,15 +71,10 @@ print(urllib.request.urlopen(req, timeout=30).read().decode())
 ## 원본(raw) 파일 올리기 (선택) / Uploading a raw dump (optional)
 
 ```bash
-python3 - <<'PY' | curl -sS -X POST https://usage-dashboard.velar-agent.workers.dev/api/raw/upload \
-  -H "Authorization: Bearer $(cat /workspace/token-usage/ingest-key.txt)" -H "Content-Type: application/json" --data-binary @-
+python3 - <<'PY' | curl -sS -X POST https://usage-dashboard-dev.velar-agent.duckdns.org/api/raw/upload \
+  -H "Authorization: Bearer $(cat /workspace/token-usage/google-ingest-key.txt)" -H "Content-Type: application/json" --data-binary @-
 import json; print(json.dumps({"name":"2026-11-15_1800_grok.jsonl","content":open("/workspace/token-usage/raw/2026-11-15_1800_grok.jsonl").read()}))
 PY
 ```
 
 `name`: 영문·숫자·`.`·`_`·`-` 200자 이하. `content`: 200,000자 이하. 같은 이름이면 덮어써요(`replaced:true`). 선택 `created_at`(ISO 8601). 대시보드에는 최신 8개만 보이고, 열람에는 비밀번호가 필요해요.
-
-## 한도 / Limits (Cloudflare 무료 플랜)
-
-Worker 하루 10만 요청, D1 하루 읽기 500만 행·쓰기 10만 행. 몇 분마다 십수 건을 보내는 정도면 한참 아래예요. 한도를 넘으면 그날만 막혀요(요금 없음).
-Workers free: 100k requests/day; D1 free: 5M rows read & 100k rows written per day. Over the limit = blocked for the day, no charges.

@@ -13,6 +13,8 @@ systemctl status usage-dashboard-google-dev
 curl -fsS http://127.0.0.1:8787/health
 ```
 
+위 `127.0.0.1` health 확인은 VM 로컬 전용이에요 (외부 전송은 https 전용).
+
 설치 스크립트를 다시 실행해도 기존 키를 유지해요. `/home/collector/.local/bin/cloudflared`가 실행 가능하면 터널도 시작해요. Quick Tunnel의 HTTPS 주소는 터널 로그에 나오고 재시작하면 바뀔 수 있어요.
 
 ```bash
@@ -130,9 +132,9 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```nginx
 # nginx-usage-dashboard.conf
-# usage-dashboard.velar-agent.duckdns.org -> 8788(prod), usage-dashboard-dev... -> 8787(dev), default_server(bare IP) -> 8787(dev)
+# usage-dashboard.velar-agent.duckdns.org -> 8788(prod), usage-dashboard-dev... -> 8787(dev), default_server(bare IP :80) -> /api/는 403, 그 외는 https://usage-dashboard-dev... 로 301
 ```
 
-프록시 헤더(`Host`, `X-Forwarded-For`, `X-Forwarded-Proto http`)는 기존 설정과 같아요.
+443 블록은 `Host`, `X-Forwarded-For`, `X-Forwarded-Proto https` 헤더를 붙여 prod/dev로 프록시해요. default_server(`:80`, bare IP)는 API를 http로 절대 서빙하지 않아요: `location /api/`는 403, 그 외의 경로는 `https://usage-dashboard-dev.velar-agent.duckdns.org`로 301해요. 데이터 전송은 https 전용이에요.
 
-수집기(`token-usage-collector`)는 두 곳에 모두 보내요. `bin/log_raw.py`가 `INGEST_URL`(dev, `http://127.0.0.1:8787/api/ingest`, 키 `/workspace/token-usage/google-ingest-key.txt`)과 `INGEST_PROD_URL`(prod, `http://127.0.0.1:8788/api/ingest`, 키 `/workspace/token-usage/google-ingest-key-prod.txt`)에 각 배치(최대 40건)를 독립적으로 POST해요. 하나라도 실패하면 로그에 키를 `[redacted]`로 찍고 다른 쪽도 시도한 뒤 에러를 올려요 — 파일은 `.logged`에 표시되지 않아 다음 회차에 다시 시도돼요. 서버는 `INSERT OR IGNORE`(`dedupe_key`)로 중복 전송을 무시하므로 안전해요. `*.workers.dev` 호스트 거부는 양쪽 모두 적용해요.
+수집기(`token-usage-collector`)는 두 곳에 모두 보내요. `bin/log_raw.py`가 `INGEST_URL`(dev, `https://usage-dashboard-dev.velar-agent.duckdns.org/api/ingest`, 키 `/workspace/token-usage/google-ingest-key.txt`)과 `INGEST_PROD_URL`(prod, `https://usage-dashboard.velar-agent.duckdns.org/api/ingest`, 키 `/workspace/token-usage/google-ingest-key-prod.txt`)에 각 배치(최대 40건)를 독립적으로 POST해요. 하나라도 실패하면 로그에 키를 `[redacted]`로 찍고 다른 쪽도 시도한 뒤 에러를 올려요 — 파일은 `.logged`에 표시되지 않아 다음 회차에 다시 시도돼요. 서버는 `INSERT OR IGNORE`(`dedupe_key`)로 중복 전송을 무시하므로 안전해요. 데이터 전송은 https 전용이라 plain http와 `*.workers.dev` 호스트는 양쪽 모두 거부해요. bare IP(`:80`)로 보낸 `/api/`는 nginx가 403해요.

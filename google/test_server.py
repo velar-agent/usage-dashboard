@@ -7,6 +7,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -603,6 +604,35 @@ class ToolTests(unittest.TestCase):
         for line in dev.splitlines():
             if line.startswith("Protect") or line.startswith("Private") or line.startswith("NoNew") or line.startswith("UMask") or line.startswith("Restrict"):
                 self.assertIn(line, text, f"hardening 라인 {line!r}이 prod에 없어요")
+
+
+class NginxConfTests(unittest.TestCase):
+    """nginx conf의 default_server 블록이 plain http API 전송을 막는지 검사해요."""
+
+    @staticmethod
+    def _default_server_blocks():
+        text = (GOOGLE_DIR / "nginx-usage-dashboard.conf").read_text(encoding="utf-8")
+        blocks = []
+        for match in re.finditer(r"server\s*\{", text):
+            depth = 0
+            for index in range(match.start(), len(text)):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        blocks.append(text[match.start():index + 1])
+                        break
+        return [block for block in blocks if "default_server" in block]
+
+    def test_default_server_rejects_api_over_plain_http(self):
+        blocks = self._default_server_blocks()
+        self.assertEqual(len(blocks), 1)
+        block = blocks[0]
+        self.assertIn("location /api/", block)
+        self.assertIn("return 403", block)
+        self.assertIn("return 301 https://usage-dashboard-dev.velar-agent.duckdns.org$request_uri", block)
+        self.assertNotIn("proxy_pass", block)
 
 
 if __name__ == "__main__":
