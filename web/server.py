@@ -1234,19 +1234,24 @@ function renderTrends() {
   }
   have.forEach(c => c.remove());
 }
+function latestResetInWin(s, now, t1) {
+  // 시리즈의 최신 기록(ts 최대)의 초기화 시각이 미래이고 창 안이면 그 값, 아니면 null (점선 세로선 한 줄).
+  let latest = null, latestTs = null;
+  for (const r of s.rows) {
+    const t = tms(r.ts);
+    if (t === null) continue;
+    if (latestTs === null || t > latestTs) { latestTs = t; latest = r; }
+  }
+  if (!latest) return null;
+  const cand = tms(latest.reset_at);
+  return cand !== null && cand > now && cand <= t1 ? cand : null;
+}
 function buildChartSvg(opts) {
   // 카드 SVG 내부 문자열을 만드는 순수 빌더 (테스트에서 직접 호출할 수 있다).
   const { vis, now, t0, t1, W, H } = opts;
   const MIN = 60e3, HR = 3600e3, DAY = 86400e3;
-  // 시리즈마다 미래·창 안에 있는 서로 다른 초기화 시각 (점선 세로선).
-  const resetsInWin = vis.map(s => {
-    const seen = new Set();
-    for (const r of s.rows) {
-      const reset = tms(r.reset_at);
-      if (reset !== null && reset > now && reset <= t1) seen.add(reset);
-    }
-    return { s, resets: [...seen].sort((a, b) => a - b) };
-  });
+  // 시리즈마다 최신 기록(ts 최대)의 미래·창 안 초기화 시각 하나만 (점선 세로선). 오래된 기록은 무시한다.
+  const resetsInWin = vis.map(s => ({ s, reset: latestResetInWin(s, now, t1) }));
   const inHistory = r => {
     const t = tms(r.ts);
     return t >= t0 && t <= now;
@@ -1261,11 +1266,10 @@ function buildChartSvg(opts) {
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.warn)}" y2="${Y(THRESH.warn)}" stroke="var(--warn)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
   g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(THRESH.bad)}" y2="${Y(THRESH.bad)}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="3 4" opacity=".7"/>`;
   // 초기화 점선 세로선: 데이터 경로보다 먼저 그려(=아래에) 둔다.
-  for (const { s, resets } of resetsInWin) {
-    for (const reset of resets) {
-      const x = X(reset);
-      g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + ih}" stroke="${s.color}" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round" opacity=".7"/>`;
-    }
+  for (const { s, reset } of resetsInWin) {
+    if (reset === null) continue;
+    const x = X(reset);
+    g += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + ih}" stroke="${s.color}" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round" opacity=".7"/>`;
   }
   const maxTicks = Math.max(3, Math.floor(iw / 64));
   const cand = [10 * MIN, 30 * MIN, HR, 3 * HR, 6 * HR, 12 * HR, DAY, 2 * DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY];
@@ -1302,7 +1306,7 @@ function drawChart(card, now, win) {
   const { t0, t1 } = win;
   const vis = ser.filter(s => seriesVisible[s.key]);
   const sig = [W, H, rng, displayedTrend.version, t0, t1,
-    ...vis.map(s => `${s.key}:${[...new Set(s.rows.map(r => tms(r.reset_at)).filter(v => v !== null && v > now && v <= t1))].sort((a, b) => a - b).join(",")}`)].join("|");
+    ...vis.map(s => `${s.key}:${latestResetInWin(s, now, t1) ?? ""}`)].join("|");
   if (plot.dataset.sig === sig) return;
   plot.dataset.sig = sig; plot.style.height = H + "px";
   const cur = card.querySelector("[data-cur]");

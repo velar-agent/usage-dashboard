@@ -239,7 +239,7 @@ test("fmtDT는 'M월D일(요일) HH:MM' 형식을 쓴다", () => {
   assert.match(out.inner, />\d{1,2}\/\d{1,2}</, "x축 틱 라벨은 M/D 그대로여야 해요");
 });
 
-test("buildChartSvg는 미래 창 안 초기화마다 점선 세로선을 하나씩 그린다", () => {
+test("buildChartSvg는 시리즈마다 최신 기록의 미래 창 안 초기화를 점선 세로선 하나로 그린다", () => {
   const { fn } = makeSandbox();
   const chartWindow = fn("chartWindow");
   const buildChartSvg = fn("buildChartSvg");
@@ -249,20 +249,22 @@ test("buildChartSvg는 미래 창 안 초기화마다 점선 세로선을 하나
   assert.equal((win.t0 + win.t1) / 2, NOW, "대칭 창이 바뀌면 안 돼요");
   assert.equal(win.t1 - NOW, NOW - win.t0);
 
-  // 행마다 다른 초기화 시각: 미래 창 안 1개(같은 시각 중복 포함), 과거 창 안 1개(그리지 않음), 창 밖 1개, null 1개.
+  // 오래된 기록들의 서로 다른 미래 창 안 초기화는 무시하고, 최신 기록(ts 최대) 하나만 그린다.
+  const latestResetMs = NOW + 2 * 86400e3;
   const ser = {
     key: "rst|weekly_used_pct|", label: "주간A", color: "var(--s1)", dash: "",
     rows: [
-      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) }, // 과거, 창 안 (그리지 않음)
-      { ts: KST(NOW - 5 * 86400e3), value: 12, reset_at: KST(NOW + 2 * 86400e3) }, // 미래, 창 안
-      { ts: KST(NOW - 120e3), value: 14, reset_at: KST(NOW + 2 * 86400e3) },        // 같은 시각 중복
-      { ts: KST(NOW - 60e3), value: 18, reset_at: null },                           // 초기화 없음
-      { ts: KST(NOW - 30e3), value: 20, reset_at: KST(NOW + 30 * 86400e3) },        // 창 밖(미래)
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) },   // 과거, 창 안 (무시)
+      { ts: KST(NOW - 5 * 86400e3), value: 12, reset_at: KST(NOW + 1 * 86400e3) },   // 오래된 미래 창 안 (무시)
+      { ts: KST(NOW - 4 * 86400e3), value: 14, reset_at: KST(NOW + 3 * 86400e3) },   // 오래된 미래 창 안 (무시)
+      { ts: KST(NOW - 120e3), value: 16, reset_at: KST(NOW + 30 * 86400e3) },        // 오래된 창 밖 (무시)
+      { ts: KST(NOW - 60e3), value: 18, reset_at: KST(latestResetMs) },               // 최신 미래 창 안
     ],
   };
   const out = buildChartSvg({ vis: [ser], now: NOW, t0: win.t0, t1: win.t1, W, H });
   const dotted = out.inner.match(/stroke-dasharray="1\.5 3"/g) || [];
-  assert.equal(dotted.length, 1, "서로 다른 미래 창 안 초기화만 점선 세로선이 있어야 해요");
+  assert.equal(dotted.length, 1, "오래된 기록의 초기화는 무시하고 최신 기록 하나만 점선 세로선이 있어야 해요");
+  assert.ok(out.inner.includes(`<line x1="${out.X(latestResetMs)}" x2="${out.X(latestResetMs)}"`), "점선 세로선이 최신 기록의 초기화 위치여야 해요");
   assert.ok(!out.inner.includes("초기화 ·"), "초기화 점선 세로선에 툴팁 텍스트가 있으면 안 돼요");
   assert.ok(!out.inner.includes("<title>"), "초기화 점선 세로선에 <title>이 있으면 안 돼요");
   assert.ok(!out.inner.includes("만기"), "창 밖 초기화 '만기 …' 라벨이 있으면 안 돼요");
@@ -274,10 +276,18 @@ test("buildChartSvg는 미래 창 안 초기화마다 점선 세로선을 하나
   assert.ok(!out.inner.includes("지금"), "SVG에 '지금' 표시가 있으면 안 돼요");
   assert.ok(!out.inner.includes("지금</text>"), "SVG에 '지금' 라벨이 있으면 안 돼요");
 
-  // 두 시리즈가 같은 시각을 공유하면 시리즈마다 한 줄씩이다.
-  const ser2 = { ...ser, key: "rst2|weekly_used_pct|", label: "주간B", color: "var(--s2)" };
+  // 두 시리즈가 있을 때 각자 최신 기록 기준으로 한 줄씩이다.
+  const ser2 = {
+    key: "rst2|weekly_used_pct|", label: "주간B", color: "var(--s2)", dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 1 * 86400e3) }, // 오래된 미래 창 안 (무시)
+      { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW + 4 * 86400e3) },        // 최신 미래 창 안
+    ],
+  };
   const both = buildChartSvg({ vis: [ser, ser2], now: NOW, t0: win.t0, t1: win.t1, W, H });
-  assert.equal((both.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "시리즈마다 미래 창 안 초기화 선을 그려야 해요");
+  assert.equal((both.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "시리즈마다 최신 기록 초기화 선을 하나씩 그려야 해요");
+  assert.ok(both.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "첫 시리즈 선이 있어야 해요");
+  assert.ok(both.inner.includes('stroke="var(--s2)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "둘째 시리즈 선이 있어야 해요");
 
   // 숨긴(범례 토글) 시리즈의 선은 그리지 않는다.
   const onlyB = buildChartSvg({ vis: [ser2], now: NOW, t0: win.t0, t1: win.t1, W, H });
@@ -286,7 +296,7 @@ test("buildChartSvg는 미래 창 안 초기화마다 점선 세로선을 하나
   assert.ok(!onlyB.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "숨긴 시리즈 선을 그리면 안 돼요");
   assert.ok(!onlyB.inner.includes("<title>"), "숨긴 시리즈 검사에서도 <title>이 있으면 안 돼요");
 
-  // 창 밖 과거 초기화는 선·만기 라벨 모두 아니다.
+  // 최신 기록의 창 밖 과거 초기화는 선·만기 라벨 모두 아니다.
   const old = {
     key: "old|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "",
     rows: [
@@ -299,33 +309,142 @@ test("buildChartSvg는 미래 창 안 초기화마다 점선 세로선을 하나
   assert.ok(!outOld.inner.includes("만기"), "과거 초기화는 '만기 …' 라벨이 아니어야 해요");
 });
 
-test("buildChartSvg는 창 안 과거 초기화를 그리지 않고 미래만 그린다", () => {
+test("buildChartSvg는 최신 기록이 창 안 과거이면 오래된 미래가 있어도 그리지 않는다", () => {
   const { fn } = makeSandbox();
   const chartWindow = fn("chartWindow");
   const buildChartSvg = fn("buildChartSvg");
   const W = 400, H = 200, earliest = NOW - 7 * 86400e3;
   const win = chartWindow("7d", NOW, earliest);
-  // 창 안 과거만: 점선 없음.
-  const pastOnly = buildChartSvg({
+  // 최신 기록이 창 안 과거: 오래된 미래가 있어도 점선 없음.
+  const pastLatest = buildChartSvg({
     vis: [{
       key: "past|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "",
       rows: [
-        { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) },
+        { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 2 * 86400e3) },
         { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW - 3 * 86400e3) },
       ],
     }],
     now: NOW, t0: win.t0, t1: win.t1, W, H,
   });
-  assert.equal((pastOnly.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "창 안 과거 초기화는 점선 세로선이 아니어야 해요");
-  // 창 안 미래는 점선 하나.
-  const future = buildChartSvg({
-    vis: [fakeSeries("a", NOW - 7 * 86400e3, NOW - 60e3, NOW + 2 * 86400e3)],
+  assert.equal((pastLatest.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "최신 기록의 창 안 과거 초기화는 점선 세로선이 아니어야 해요");
+  // 최신 기록이 창 안 미래: 점선 하나.
+  const futureLatest = buildChartSvg({
+    vis: [{
+      key: "future|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "",
+      rows: [
+        { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW - 3 * 86400e3) },
+        { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW + 2 * 86400e3) },
+      ],
+    }],
     now: NOW, t0: win.t0, t1: win.t1, W, H,
   });
-  assert.equal((future.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "창 안 미래 초기화 점선 세로선이 하나 있어야 해요");
+  assert.equal((futureLatest.inner.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "최신 기록의 창 안 미래 초기화 점선 세로선이 하나 있어야 해요");
 });
 
-test("drawChart는 초기화 집합이 바뀌면 다시 그린다 (버전은 그대로)", () => {
+test("buildChartSvg는 오래된 기록의 서로 다른 초기화를 무시하고 ts 최대 기록만 쓴다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const W = 400, H = 200, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  const count = (inner) => (inner.match(/stroke-dasharray="1\.5 3"/g) || []).length;
+
+  // 오래된 기록이 서로 다른 미래 창 안 초기화를 다 가져도 선은 최신 하나만.
+  const latestMs = NOW - 60e3, latestResetMs = NOW + 2 * 86400e3;
+  const rows = [
+    { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 1 * 86400e3) },
+    { ts: KST(NOW - 5 * 86400e3), value: 12, reset_at: KST(NOW + 3 * 86400e3) },
+    { ts: KST(NOW - 4 * 86400e3), value: 14, reset_at: KST(NOW + 4 * 86400e3) },
+    { ts: KST(latestMs), value: 20, reset_at: KST(latestResetMs) },
+  ];
+  const mk = (rs) => ({ key: "ord|weekly_used_pct|", label: "주간", color: "var(--s1)", dash: "", rows: rs });
+  const fwd = buildChartSvg({ vis: [mk(rows)], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal(count(fwd.inner), 1, "오래된 기록의 초기화는 선을 만들지 않아야 해요");
+  assert.ok(fwd.inner.includes(`<line x1="${fwd.X(latestResetMs)}" x2="${fwd.X(latestResetMs)}"`), "점선 세로선이 최신 기록의 초기화 위치여야 해요");
+
+  // 행 순서가 바뀌어도 ts 최대 기록이 같은 선을 낸다.
+  const rev = buildChartSvg({ vis: [mk([...rows].reverse())], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal(count(rev.inner), 1, "행 순서가 바뀌어도 점선 세로선은 하나여야 해요");
+  assert.ok(rev.inner.includes(`<line x1="${rev.X(latestResetMs)}" x2="${rev.X(latestResetMs)}"`), "순서가 바뀌어도 최신 기록의 초기화 위치가 같아야 해요");
+
+  // 최신 기록이 과거 초기화면 오래된 미래가 있어도 선이 없다.
+  const pastLatest = buildChartSvg({
+    vis: [mk([
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 2 * 86400e3) },
+      { ts: KST(latestMs), value: 20, reset_at: KST(NOW - 1 * 86400e3) },
+    ])],
+    now: NOW, t0: win.t0, t1: win.t1, W, H,
+  });
+  assert.equal(count(pastLatest.inner), 0, "최신 기록의 과거 초기화는 선이 아니어야 해요");
+
+  // 최신 기록의 초기화가 창 밖이면 선이 없다.
+  const beyondLatest = buildChartSvg({
+    vis: [mk([
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 2 * 86400e3) },
+      { ts: KST(latestMs), value: 20, reset_at: KST(NOW + 30 * 86400e3) },
+    ])],
+    now: NOW, t0: win.t0, t1: win.t1, W, H,
+  });
+  assert.equal(count(beyondLatest.inner), 0, "최신 기록의 창 밖 초기화는 선이 아니어야 해요");
+
+  // 최신 기록에 초기화가 없으면(null·무효) 선이 없다.
+  for (const bad of [null, "not-a-date"]) {
+    const noReset = buildChartSvg({
+      vis: [mk([
+        { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 2 * 86400e3) },
+        { ts: KST(latestMs), value: 20, reset_at: bad },
+      ])],
+      now: NOW, t0: win.t0, t1: win.t1, W, H,
+    });
+    assert.equal(count(noReset.inner), 0, `최신 기록의 초기화(${bad})가 없으면 선이 아니어야 해요`);
+  }
+});
+
+test("buildChartSvg는 한 카드에 시리즈마다 최대 하나의 점선 세로선만 그린다", () => {
+  const { fn } = makeSandbox();
+  const chartWindow = fn("chartWindow");
+  const buildChartSvg = fn("buildChartSvg");
+  const W = 400, H = 200, earliest = NOW - 7 * 86400e3;
+  const win = chartWindow("7d", NOW, earliest);
+  const count = (inner) => (inner.match(/stroke-dasharray="1\.5 3"/g) || []).length;
+
+  // 두 시리즈가 각각 여러 오래된 미래를 가진 채로도 각자 최신 하나씩만 그린다.
+  const serA = {
+    key: "a|weekly_used_pct|", label: "A", color: "var(--s1)", dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * 86400e3), value: 10, reset_at: KST(NOW + 1 * 86400e3) },
+      { ts: KST(NOW - 60e3), value: 20, reset_at: KST(NOW + 2 * 86400e3) },
+    ],
+  };
+  const serB = {
+    key: "b|weekly_used_pct|", label: "B", color: "var(--s2)", dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * 86400e3), value: 12, reset_at: KST(NOW + 2 * 86400e3) },
+      { ts: KST(NOW - 60e3), value: 22, reset_at: KST(NOW + 4 * 86400e3) },
+    ],
+  };
+  const both = buildChartSvg({ vis: [serA, serB], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal(count(both.inner), 2, "두 시리즈는 각자 최대 하나씩, 총 두 줄이어야 해요");
+  assert.ok(both.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "첫 시리즈 선이 있어야 해요");
+  assert.ok(both.inner.includes('stroke="var(--s2)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "둘째 시리즈 선이 있어야 해요");
+  assert.ok(both.inner.includes(`<line x1="${both.X(NOW + 2 * 86400e3)}" x2="${both.X(NOW + 2 * 86400e3)}"`), "첫 선이 첫 시리즈 최신 위치여야 해요");
+  assert.ok(both.inner.includes(`<line x1="${both.X(NOW + 4 * 86400e3)}" x2="${both.X(NOW + 4 * 86400e3)}"`), "둘째 선이 둘째 시리즈 최신 위치여야 해요");
+
+  // 한쪽 최신이 유효하지 않으면 다른 쪽 하나만 그린다.
+  const serBStale = {
+    key: "b|weekly_used_pct|", label: "B", color: "var(--s2)", dash: "",
+    rows: [
+      { ts: KST(NOW - 6 * 86400e3), value: 12, reset_at: KST(NOW + 4 * 86400e3) },
+      { ts: KST(NOW - 60e3), value: 22, reset_at: KST(NOW - 1 * 86400e3) },
+    ],
+  };
+  const onlyA = buildChartSvg({ vis: [serA, serBStale], now: NOW, t0: win.t0, t1: win.t1, W, H });
+  assert.equal(count(onlyA.inner), 1, "최신 기록이 과거인 시리즈는 선이 없어야 해요");
+  assert.ok(onlyA.inner.includes('stroke="var(--s1)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "유효한 시리즈 선만 남아야 해요");
+  assert.ok(!onlyA.inner.includes('stroke="var(--s2)" stroke-width="1.5" stroke-dasharray="1.5 3"'), "최신 기록이 과거인 시리즈 선은 없어야 해요");
+});
+
+test("drawChart는 최신 기록 초기화가 바뀌면 다시 그린다 (버전은 그대로)", () => {
   const { sandbox, fn } = makeSandbox();
   const chartWindow = fn("chartWindow");
   const drawChart = fn("drawChart");
@@ -355,14 +474,25 @@ test("drawChart는 초기화 집합이 바뀌면 다시 그린다 (버전은 그
   assert.equal(plot.dataset.sig, sig1, "같은 데이터에서는 sig가 같아야 해요");
   assert.equal(plot.innerHTML, inner1, "같은 데이터에서는 다시 그리지 않아야 해요");
 
-  // 버전을 그대로 두고 초기화 집합만 바꿔도 다시 그려야 한다.
+  // 오래된 기록을 추가해도 최신 초기화는 그대로라 sig·선은 변하지 않는다.
+  vm.runInContext(
+    `displayedTrend.series.get("codex")[0].rows.push({ ts: ${JSON.stringify(KST(NOW - 5 * 86400e3))}, value: 12, reset_at: ${JSON.stringify(KST(NOW + 5 * 86400e3))} });`,
+    sandbox
+  );
+  drawChart(card, NOW, win);
+  assert.equal(plot.dataset.sig, sig1, "오래된 기록 추가는 sig를 바꾸면 안 돼요");
+  assert.equal(plot.innerHTML, inner1, "오래된 기록 추가는 다시 그리지 않아야 해요");
+
+  // 버전을 그대로 두고 최신 기록의 초기화만 바꿔도 다시 그려야 한다.
+  const innerBeforeLatestPush = plot.innerHTML;
   vm.runInContext(
     `displayedTrend.series.get("codex")[0].rows.push({ ts: ${JSON.stringify(KST(NOW - 10e3))}, value: 22, reset_at: ${JSON.stringify(KST(NOW + 4 * 86400e3))} });`,
     sandbox
   );
   drawChart(card, NOW, win);
-  assert.notEqual(plot.dataset.sig, sig1, "초기화 집합이 바뀌면 sig가 바뀌어야 해요");
-  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 2, "새 초기화 선이 추가되어야 해요");
+  assert.notEqual(plot.dataset.sig, sig1, "최신 기록 초기화가 바뀌면 sig가 바뀌어야 해요");
+  assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "초기화 선은 최신 기록의 하나만 남아야 해요");
+  assert.notEqual(plot.innerHTML, innerBeforeLatestPush, "최신 기록 초기화가 바뀌면 선 위치가 바뀌어야 해요");
 
   // 범례 토글로 시리즈를 숨기면 선이 사라진다.
   vm.runInContext(`seriesVisible["rst|weekly_used_pct|"] = false;`, sandbox);
@@ -393,7 +523,7 @@ test("drawChart sig는 now가 미래 초기화를 지나면 바뀐다", () => {
   drawChart(card, NOW, win);
   const sigBefore = plot.dataset.sig;
   assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 1, "미래 초기화 선이 하나여야 해요");
-  // now가 초기화를 지난 뒤에는 미래 집합이 비어 sig가 바뀌고 선이 사라진다 (같은 창이어도).
+  // now가 초기화를 지난 뒤에는 최신 기록의 미래 초기화가 비어 sig가 바뀌고 선이 사라진다 (같은 창이어도).
   drawChart(card, resetMs + 1000, win);
   assert.notEqual(plot.dataset.sig, sigBefore, "now가 초기화를 지나면 sig가 바뀌어야 해요");
   assert.equal((plot.innerHTML.match(/stroke-dasharray="1\.5 3"/g) || []).length, 0, "지난 초기화 선은 사라져야 해요");
