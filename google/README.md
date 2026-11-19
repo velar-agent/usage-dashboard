@@ -1,6 +1,6 @@
-# usage-dashboard-google-dev
+# usage-dashboard (google/)
 
-Ubuntu 24.04에서 Python 3.12 표준 라이브러리로 실행하는 사용량 대시보드예요. 한 프로세스가 HTTP 요청을 스레드로 처리하고 SQLite(WAL)에 저장해요. 시작할 때 저장소의 `worker/schema.sql`을 적용하고 `worker/src/html.js`에서 화면을 읽어요.
+GCE VM(Ubuntu 24.04)에서 Python 3.12 표준 라이브러리로 실행하는 사용량 대시보드 서버예요. dev(8787)와 prod(8788) 두 인스턴스가 같은 코드를 써요. 한 프로세스가 HTTP 요청을 스레드로 처리하고 SQLite(WAL)에 저장해요. 시작할 때 저장소의 `worker/schema.sql`을 적용하고 `worker/src/html.js`에서 화면을 읽어요.
 
 ## VM에 설치
 
@@ -15,12 +15,11 @@ curl -fsS http://127.0.0.1:8787/health
 
 위 `127.0.0.1` health 확인은 VM 로컬 전용이에요 (외부 전송은 https 전용).
 
-설치 스크립트를 다시 실행해도 기존 키를 유지해요. `/home/collector/.local/bin/cloudflared`가 실행 가능하면 터널도 시작해요. Quick Tunnel의 HTTPS 주소는 터널 로그에 나오고 재시작하면 바뀔 수 있어요.
+설치 스크립트를 다시 실행해도 기존 키를 유지해요. 공개 접속은 아래 nginx와 Let's Encrypt https로 해요. Cloudflare Quick Tunnel 유닛(`cloudflared-usage-dashboard-google-dev`)은 예전 방식이라 지금은 쓰지 않고 비활성이에요.
 
 ```bash
 sudo systemctl restart usage-dashboard-google-dev
 journalctl -u usage-dashboard-google-dev -n 50 --no-pager
-journalctl -u cloudflared-usage-dashboard-google-dev -n 50 --no-pager
 ```
 
 ## 환경 변수
@@ -35,46 +34,20 @@ journalctl -u cloudflared-usage-dashboard-google-dev -n 50 --no-pager
 | `DB_PATH` | 기본값은 저장소의 `google/data/usage.sqlite3` 절대 경로예요. |
 | `HOST`, `PORT` | 기본값은 `127.0.0.1`, `8787`이에요. |
 
-로그인 시도 제한은 `CF-Connecting-IP`와 `X-Forwarded-For` 헤더를 신뢰하므로 서버를 터널이나 리버스 프록시 뒤에서 `127.0.0.1`에만 바인딩하고, 공개 인터페이스에는 절대 직접 바인딩하지 마세요.
+로그인 시도 제한은 `CF-Connecting-IP`와 `X-Forwarded-For` 헤더를 신뢰하므로 서버를 nginx 같은 리버스 프록시 뒤에서 `127.0.0.1`에만 바인딩하고, 공개 인터페이스에는 절대 직접 바인딩하지 마세요.
 
-`python3 gen_env.py [전용디렉터리/env]`로 직접 생성할 수도 있어요. `--force`는 수집 키, 세션 키, 원본 비밀번호를 모두 교체해요. 교체한 뒤에는 수집기에 새 키를 설정하고 앱을 재시작하세요. DB를 다른 디렉터리로 옮기면 앱 유닛의 `ReadWritePaths`에 그 경로를 지정하세요. 수신 포트를 바꾸면 터널 유닛의 `--url`에도 반영하세요.
+`python3 gen_env.py [전용디렉터리/env]`로 직접 생성할 수도 있어요. `--force`는 수집 키, 세션 키, 원본 비밀번호를 모두 교체해요. 교체한 뒤에는 수집기에 새 키를 설정하고 앱을 재시작하세요. DB를 다른 디렉터리로 옮기면 앱 유닛의 `ReadWritePaths`에 그 경로를 지정하세요.
 
 ## HTTP 동작
 
 - 수집·업로드 형식은 [기록 전송 안내](../docs/INGEST.md)를 따르고 요청 주소만 이 서버로 바꿔요. 수집은 한 번에 최대 40건, 본문은 256 KiB, 정규화한 기록 하나는 4096바이트예요.
-- `/api/records`는 `service`, `metric`, `q`, `limit`에 `since`(ISO 8601를 `ts_kst >=`로 바꿔 걸어요), `latest=1`(시리즈별 최신), `total=0`(총수 생략)도 읽어요. `since`가 ISO 8601이 아니면 400을 돌려줘요. `/api/trends?range=24h|7d|all`(기본 7d)은 버킷 마지막·초기화 양끝·시작/최신만 남겨 최대 2만 건까지 돌려주고 잘못된 `range`는 400으로 돌려줘요. Worker의 20초 엣지 캐시를 프로세스 안에 두므로 같은 URL에는 최대 20초 전 결과가 보일 수 있어요. 브라우저 응답은 `Cache-Control: no-store`예요.
-- 원본 세션은 12시간 동안 유효해요. Worker와 같이 HTTP와 HTTPS 모두 쿠키에 `Secure; HttpOnly; SameSite=Strict`를 붙여요. 브라우저에서 원본을 열 때는 터널의 HTTPS 주소를 사용하세요.
+- `/api/records`는 `service`, `metric`, `q`, `limit`에 `since`(ISO 8601를 `ts_kst >=`로 바꿔 걸어요), `latest=1`(시리즈별 최신), `total=0`(총수 생략)도 읽어요. `since`가 ISO 8601이 아니면 400을 돌려줘요. `/api/trends?range=24h|7d|all`(기본 7d)은 버킷 마지막·초기화 양끝·시작/최신만 남겨 최대 2만 건까지 돌려주고 잘못된 `range`는 400으로 돌려줘요. 프로세스 안에 20초 캐시를 두므로 같은 URL에는 최대 20초 전 결과가 보일 수 있어요. 브라우저 응답은 `Cache-Control: no-store`예요.
+- 원본 세션은 12시간 동안 유효해요. HTTP와 HTTPS 모두 쿠키에 `Secure; HttpOnly; SameSite=Strict`를 붙여요. 브라우저에서 원본을 열 때는 https 도메인 주소를 사용하세요.
 - 로그인 제한은 IP당 60초에 비밀번호 실패 5회예요. IP는 `CF-Connecting-IP`, `X-Forwarded-For`의 첫 값, TCP 접속 주소 순서로 골라 해시로 저장해요. 서버가 전달 헤더를 신뢰하므로 외부 요청은 이 헤더를 설정하는 프록시를 통해 받으세요.
 
-## D1 기록 가져오기
+## 예전 D1 기록 가져오기(참고)
 
-D1 읽기 권한이 있는 컴퓨터의 비공개 디렉터리에서 두 표의 모든 열을 내보내세요. 아래 예시는 개발 DB `usage-dev`를 읽어요.
-
-```bash
-umask 077
-wrangler d1 execute usage-dev --remote --json --command 'SELECT * FROM records ORDER BY id' > records.json
-wrangler d1 execute usage-dev --remote --json --command 'SELECT * FROM raw_files ORDER BY name' > raw_files.json
-python3 - <<'PY'
-import json
-from pathlib import Path
-
-tables = {}
-for name in ("records", "raw_files"):
-    result = json.loads(Path(name + ".json").read_text(encoding="utf-8"))
-    tables[name] = result[0]["results"]
-with Path("export.json").open("w", encoding="utf-8") as out:
-    json.dump(tables, out, ensure_ascii=False)
-PY
-```
-
-완성한 `{"records":[...],"raw_files":[...]}` 파일을 VM의 비공개 경로에 놓고 `collector` 계정으로 실행하세요.
-
-```bash
-cd /workspace/usage-dashboard/google
-python3 import_d1_json.py ~/export.json
-```
-
-경로를 바꾼 DB는 `--db /경로/usage.sqlite3`로 지정해요. 가져오기는 파일을 한 행씩 읽어 원래 id와 모든 열을 보존하고 표별 추가·중복 건수만 출력해요. 같은 `dedupe_key`나 파일 이름은 건너뛰어요. 다른 기록이 같은 id를 쓰면 전체 가져오기를 롤백해요.
+Cloudflare D1에서 옮겨 올 때 쓰던 `import_d1_json.py`가 남아 있어요. D1은 삭제됐고 이미 옮겼으므로 다시 쓸 일은 없어요.
 
 로컬 검사는 `google/`에서 `python3 -m unittest -v`로 실행해요. 임시 DB와 임의의 루프백 포트를 사용해요.
 
@@ -112,7 +85,7 @@ curl -fsS http://127.0.0.1:8788/health
 google/promote-prod.sh [--dry-run] [--force]
 ```
 
-`promote-prod.sh`는 옛 `worker/scripts/nightly-promote.sh`와 비슷한 동작을 해요(locks `flock`, 로그 `~/.local/state/usage-deploy/YYYY-MM-DD.log`, `last-run.json`, 60일 로그 정리, 종료 코드). Cloudflare 로직은 없어요.
+`promote-prod.sh`는 다음과 같이 동작해요(`flock` 잠금, 로그 `~/.local/state/usage-deploy/YYYY-MM-DD.log`, `last-run.json`, 60일 로그 정리, 종료 코드).
 
 - dev 저장소 `/workspace/usage-dashboard`에서 브랜치 `main`, 추적 트리 깨끗함, `git pull --ff-only`(dry-run이면 `git fetch`만), `HEAD == origin/main`을 확인해요.
 - precheck: `google/`에서 `python3 -m unittest`와 `python3 -m py_compile *.py`를 통과해야 올려요.
