@@ -1507,13 +1507,13 @@ test("renderCalendar는 HH:MM 뒤에 cal-pct 사용량을 보이고 title에 포
   vm.runInContext(`renderCalendar(${NOW});`, sandbox);
   const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
   assert.ok(body.includes('class="cal-pct"'), "cal-pct 스팬이 있어야 해요");
-  assert.ok(body.includes('class="cal-pct">45%</span>'), "45% 사용량이 cal-pct 안에 있어야 해요");
-  assert.ok(body.includes('class="cal-pct">12.5%</span>'), "12.5% 사용량이 cal-pct 안에 있어야 해요");
+  assert.ok(body.includes('class="cal-pct" data-s="ok">45%</span>'), "45% 사용량이 cal-pct 안에 있어야 해요");
+  assert.ok(body.includes('class="cal-pct" data-s="ok">12.5%</span>'), "12.5% 사용량이 cal-pct 안에 있어야 해요");
   assert.ok(body.indexOf(hmClaude) !== -1, "HH:MM이 렌더링되어야 해요");
-  assert.ok(body.indexOf(hmClaude) < body.indexOf('class="cal-pct">45%'), "사용량은 HH:MM 뒤에 있어야 해요");
+  assert.ok(body.indexOf(hmClaude) < body.indexOf('class="cal-pct" data-s="ok">45%'), "사용량은 HH:MM 뒤에 있어야 해요");
   assert.ok(body.includes(`title="Claude 주간 ${hmClaude} 45%"`), `title에 사용량이 포함되어야 해요: ${body.slice(0, 200)}`);
   assert.ok(body.includes(`title="Codex 주간 ${hmCodex} 12.5% · Pro"`), `메모가 있을 때 title에 사용량과 메모가 포함되어야 해요: ${body.slice(0, 300)}`);
-  assert.ok(html.includes(".cal-pct { white-space:nowrap; font-weight:700; color:var(--ink); margin-left:3px; font-variant-numeric:tabular-nums }"), "cal-pct CSS가 있어야 해요");
+  assert.ok(html.includes(".cal-pct { white-space:nowrap; font-weight:400; font-variant-numeric:tabular-nums }"), "cal-pct CSS가 있어야 해요");
   const scripts = extractScripts(html);
   assert.ok(scripts.length >= 1, "인라인 스크립트를 찾지 못했어요");
   for (let i = 0; i < scripts.length; i++) {
@@ -1522,7 +1522,95 @@ test("renderCalendar는 HH:MM 뒤에 cal-pct 사용량을 보이고 title에 포
   vm.runInContext(`CF.k = ["claude|weekly_used_pct|"]; renderCalendar(${NOW});`, sandbox);
   const narrowed = sandbox.__byId.get("calBody")?.innerHTML ?? "";
   assert.ok(narrowed.includes("Claude"), "필터로 고른 Claude가 남아 있어야 해요");
-  assert.ok(narrowed.includes('class="cal-pct">45%</span>'), "필터로 고른 항목의 사용량이 남아 있어야 해요");
+  assert.ok(narrowed.includes('class="cal-pct" data-s="ok">45%</span>'), "필터로 고른 항목의 사용량이 남아 있어야 해요");
   assert.ok(!narrowed.includes("Codex"), "필터에서 빠진 Codex는 없어야 해요");
-  assert.ok(!narrowed.includes('class="cal-pct">12.5%'), "필터에서 빠진 사용량은 없어야 해요");
+  assert.ok(!narrowed.includes('class="cal-pct" data-s="ok">12.5%'), "필터에서 빠진 사용량은 없어야 해요");
 });
+
+test("calendarEntries는 st를 사용률 수준에 따라 붙인다", () => {
+  const { fn } = makeSandbox();
+  const calendarEntries = fn("calendarEntries");
+  assert.equal(typeof calendarEntries, "function", "calendarEntries가 전역 함수로 있어야 해요");
+  const now = NOW;
+  const future = now + 86400e3;
+  // finite pct -> ok (viewOf가 아닌 raw 형태)
+  const okPct = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: 45, unit: "%" }, rs: future }], now);
+  assert.equal(okPct.length, 1, "미래 초기화 하나는 남아야 해요");
+  assert.equal(okPct[0].st, "ok", "유한 pct는 ok여야 해요");
+  assert.equal(okPct[0].usage, "45%", "pct 사용량은 그대로여야 해요");
+  const okPct2 = calendarEntries([{ r: { service: "codex", metric: "weekly_used_pct", note: "", value: 12.5, unit: "%" }, rs: future }], now);
+  assert.equal(okPct2[0].st, "ok", "소수 pct도 ok여야 해요");
+  // non-pct -> na
+  const nonPct = calendarEntries([{ r: { service: "claude", metric: "tokens_in", value: 1234, unit: "tokens" }, rs: future }], now);
+  assert.equal(nonPct[0].st, "na", "비pct는 na여야 해요");
+  // pct non-finite -> na
+  const nonFinite = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: "abc", unit: "%" }, rs: future }], now);
+  assert.equal(nonFinite[0].st, "na", "pct 비유한은 na여야 해요");
+  const missing = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: null, unit: "%" }, rs: future }], now);
+  assert.equal(missing[0].st, "na", "pct 없음은 na여야 해요");
+  // viewOf 결과는 item.st를 그대로 쓴다 (statusOf와 일정하게)
+  const viaStOk = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: 45, unit: "%" }, rs: future, n: 45, st: "ok" }], now);
+  assert.equal(viaStOk[0].st, "ok", "viewOf st ok를 그대로 써야 해요");
+  const viaStNa = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: "abc", unit: "%" }, rs: future, n: NaN, st: "na" }], now);
+  assert.equal(viaStNa[0].st, "na", "viewOf st na를 그대로 써야 해요");
+  const viaStRaw = calendarEntries([{ r: { service: "claude", metric: "weekly_used_pct", note: "", value: 99, unit: "%" }, rs: future, n: 99 }], now);
+  assert.equal(viaStRaw[0].st, "ok", "st가 없으면 raw pct로 statusOf를 써야 해요");
+});
+
+test("renderCalendar는 HH:MM과 사용량 사이에 공백을 두고 상태 색을 쓴다", () => {
+  const { sandbox, html, fn } = makeSandbox();
+  const fmtHM = fn("fmtHM");
+  assert.equal(typeof fmtHM, "function", "fmtHM이 있어야 해요");
+  const resetAt = Date.parse("2026-11-20T20:00:00+09:00");
+  const hm = fmtHM(resetAt);
+  assert.equal(hm, "20:00", "20:00으로 고정되어야 해요");
+  vm.runInContext(
+    `loaded = true; fetchFailed = false; skipped = 0;
+     RECORDS = [
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "claude", metric: "weekly_used_pct", value: 45, note: "", unit: "%", reset_at: ${JSON.stringify(KST(resetAt))} },
+       { ts: ${JSON.stringify(KST(NOW - 2 * 60e3))}, service: "codex", metric: "weekly_used_pct", value: 10, note: "", unit: "%", reset_at: ${JSON.stringify(KST(NOW + 86400e3))} },
+     ];
+     latestByService = new Map([["claude", ${NOW - 2 * 60e3}], ["codex", ${NOW - 2 * 60e3}]]);
+     CF.k = [];
+     calCursor = null;`,
+    sandbox
+  );
+  vm.runInContext(`renderCalendar(${NOW});`, sandbox);
+  const body = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(body.includes('20:00 <span class="cal-pct" data-s="ok">45%</span>'), "20:00과 45% 사이에 공백이 있어야 해요");
+  // 엔트리 텍스트는 태그를 빼면 "Claude 주간 20:00 45%"가 된다 (공백 포함)
+  const entryMatch = body.match(/Claude 주간 20:00\s*<span class="cal-pct" data-s="ok">45%<\/span>/);
+  assert.ok(entryMatch, "엔트리 텍스트가 Claude 주간 20:00 45% 형태여야 해요");
+  const textOnly = body.replace(/<[^>]+>/g, "").replace(/ +/g, " ");
+  assert.ok(textOnly.includes("Claude 주간 20:00 45%"), "태그를 빼면 엔트리 텍스트가 Claude 주간 20:00 45%여야 해요");
+  // CSS: cal-pct 규칙에 볼드가 없고 상태별 색이 있다
+  const calPctMatch = html.match(/\.cal-pct\s*\{[^}]*\}/);
+  assert.ok(calPctMatch, "cal-pct 규칙이 있어야 해요");
+  assert.ok(!calPctMatch[0].includes("font-weight:700"), "cal-pct에 볼드가 있으면 안 돼요");
+  assert.ok(calPctMatch[0].includes("font-weight:400") || calPctMatch[0].includes("font-weight:inherit"), "cal-pct는 400이어야 해요");
+  assert.ok(calPctMatch[0].includes("white-space:nowrap"), "nowrap이 있어야 해요");
+  assert.ok(calPctMatch[0].includes("tabular-nums"), "tabular-nums가 있어야 해요");
+  assert.ok(!calPctMatch[0].includes("color:var(--ink)"), "cal-pct에 직접 색이 있으면 안 돼요");
+  assert.ok(!calPctMatch[0].includes("margin-left"), "cal-pct에 margin-left가 있으면 안 돼요");
+  assert.ok(html.includes('.cal-pct[data-s="ok"]{color:var(--ok)}'), "ok 색 규칙이 있어야 해요");
+  assert.ok(html.includes('.cal-pct[data-s="warn"]{color:var(--warn)}'), "warn 색 규칙이 있어야 해요");
+  assert.ok(html.includes('.cal-pct[data-s="bad"]{color:var(--bad)}'), "bad 색 규칙이 있어야 해요");
+  assert.ok(html.includes('.cal-pct[data-s="na"]{color:var(--muted)}'), "na 색 규칙이 있어야 해요");
+  // 필터와 스크립트 파싱
+  const scripts = extractScripts(html);
+  assert.ok(scripts.length >= 1, "인라인 스크립트를 찾지 못했어요");
+  for (let i = 0; i < scripts.length; i++) {
+    assert.doesNotThrow(() => new Function(scripts[i]), `스크립트 #${i + 1} 구문 오류`);
+  }
+  vm.runInContext(`CF.k = ["claude|weekly_used_pct|"]; renderCalendar(${NOW});`, sandbox);
+  const narrowed = sandbox.__byId.get("calBody")?.innerHTML ?? "";
+  assert.ok(narrowed.includes("Claude"), "필터로 고른 Claude가 남아 있어야 해요");
+  assert.ok(!narrowed.includes("Codex"), "필터에서 빠진 Codex는 없어야 해요");
+  // html.js 동기화
+  const out = execSync(
+    "python3 -c \"import importlib.util,sys; from pathlib import Path; spec=importlib.util.spec_from_file_location('p',Path('worker/scripts/promote-dev-to-prod.py')); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); h=m.load_index_html(); exp=m.expected_html_js(h); act=Path('worker/src/html.js').read_text(encoding='utf-8'); sys.exit(0 if act==exp else 1)\"",
+    { encoding: "utf8", cwd: REPO_ROOT }
+  );
+  assert.equal(out.status ?? 0, 0, "html.js가 server.py와 다릅니다");
+});
+

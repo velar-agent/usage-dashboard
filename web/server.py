@@ -542,7 +542,8 @@ section:first-of-type { margin-top:0; }
 .cal-num { font-size:12px; line-height:16px; font-weight:700; color:var(--ink-2); }
 .cal-day[data-today="1"] .cal-num { color:var(--accent); }
 .cal-entry { font-size:11px; line-height:15px; color:var(--ink-2); border-left:3px solid var(--accent); padding-left:5px; overflow-wrap:anywhere; word-break:keep-all; }
-.cal-pct { white-space:nowrap; font-weight:700; color:var(--ink); margin-left:3px; font-variant-numeric:tabular-nums }
+.cal-pct { white-space:nowrap; font-weight:400; font-variant-numeric:tabular-nums }
+.cal-pct[data-s="ok"]{color:var(--ok)} .cal-pct[data-s="warn"]{color:var(--warn)} .cal-pct[data-s="bad"]{color:var(--bad)} .cal-pct[data-s="na"]{color:var(--muted)}
 @media (max-width:719px){
   .cal-wrap { padding:var(--sp-3); }
   .cal-day { min-height:56px; padding:4px 4px 6px 4px; }
@@ -1333,7 +1334,8 @@ function calendarEntries(seriesList, now) {
     if (n === 0) continue;
     const nr = num(r.value);
     const usage = isPctRec(r) && !Number.isFinite(nr) ? "—" : fmtVal(r);
-    out.push({ t: rs, service: r.service, metric: r.metric, note: r.note || "", usage });
+    const st = item.st !== undefined && item.st !== null ? item.st : (isPctRec(r) ? statusOf(num(r.value)) : "na");
+    out.push({ t: rs, service: r.service, metric: r.metric, note: r.note || "", usage, st });
   }
   out.sort((a, b) => a.t - b.t || String(a.service).localeCompare(String(b.service)) || String(a.metric).localeCompare(String(b.metric)));
   return out;
@@ -1414,8 +1416,9 @@ function renderCalendar(now = Date.now()) {
       const entryHtml = day.entries.map(e => {
         const label = `${esc(svcName(e.service))} ${esc(metricLabel(e.metric))} ${fmtHM(e.t)}`;
         const usage = e.usage !== undefined && e.usage !== null ? e.usage : "—";
+        const st = e.st !== undefined && e.st !== null ? e.st : "na";
         const titleAttr = ` title="${label} ${esc(usage)}${e.note ? " · " + esc(e.note) : ""}"`;
-        return `<div class="cal-entry"${titleAttr}>${label}<span class="cal-pct">${esc(usage)}</span></div>`;
+        return `<div class="cal-entry"${titleAttr}>${label} <span class="cal-pct" data-s="${esc(st)}">${esc(usage)}</span></div>`;
       }).join("");
       cells += `<div class="cal-day"${outAttr}${todayAttr}><div class="cal-num">${day.d}</div>${entryHtml}</div>`;
     }
