@@ -20,11 +20,7 @@ The dashboard runs on a Google VM and data transfer is **https only**. Send to d
 | `reset_at` | 아니오 | ISO 8601 |
 | `note` | 아니오 | 문자열 ≤200자 |
 | `source` | 아니오 | 문자열 ≤100자 |
-| `reason` | 아니오 | 문자열 ≤100자. 사용량 없음 사유(예: `server_sent_no_usage`) |
-| `hint` | 아니오 | 문자열 ≤200자. 사용량 없음에 대한 부가 설명 |
 | 그 밖의 필드 | 아니오 | 그대로 보존돼요 (예: `raw_file`, `raw_source`). 밑줄(`_`)로 시작하는 이름은 안 돼요. 기록 하나 4KB 이하 |
-
-`metric`이 `usage_unavailable`이면 `value`는 숫자 0이지만 사용률 0%가 아니에요. 서버가 사용량 스냅샷을 보내지 않았다는 관측입니다. SQLite `value` 칼럼이 NOT NULL이라 숫자는 필요해요.
 
 중복 / Dedupe: `ts` + `service` + `metric` + `note` 가 같은 기록은 한 번만 저장돼요 (두 번째는 `duplicates` 로 세어지고 무시돼요). 같은 값을 다시 보내도 안전해요.
 Records with the same `ts`+`service`+`metric`+`note` are stored once; re-sending is safe.

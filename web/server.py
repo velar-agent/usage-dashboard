@@ -851,7 +851,7 @@ const SLOT_LOAD_DELAY = 45e3;      // 슬롯 뒤 이만큼 지나서 새 기록�
 const SLOT_RETRY_MS = 15e3;        // 슬롯 뒤 새 기록이 없으면 이 간격으로 재시도
 const SLOT_RETRY_CAP = 2 * 60e3;   // 재시도 상한 (slot+45s 시도 뒤 2분, 그 뒤는 다음 슬롯까지 대기)
 const SVC_NAME = { grok:"Grok", codex:"Codex", claude:"Claude", gemini:"Gemini", antigravity:"Antigravity", muse:"Muse" };
-const METRIC_LABEL = { weekly_used_pct:"주간", session_used_pct:"세션(5시간)", weekly_scoped_used_pct:"주간·모델별", weekly_remaining_pct:"주간 남음", tokens_in:"입력 토큰", tokens_out:"출력 토큰", cost:"비용", usage_unavailable:"사용량 없음" };
+const METRIC_LABEL = { weekly_used_pct:"주간", session_used_pct:"세션(5시간)", weekly_scoped_used_pct:"주간·모델별", weekly_remaining_pct:"주간 남음", tokens_in:"입력 토큰", tokens_out:"출력 토큰", cost:"비용" };
 const WINDOW_MS = m => /session/.test(m || "") ? 5 * 3600e3 : /weekly/.test(m || "") ? 7 * 86400e3 : null;
 const $ = id => document.getElementById(id);
 
@@ -975,27 +975,9 @@ const pageSize = () => matchMedia("(max-width:719px)").matches ? 10 : 30;
 shown = pageSize();
 
 /* ---------- 파생 ---------- */
-function isNoUsageRec(r) {
-  return !!r && (r.metric === "usage_unavailable" || r.reason === "server_sent_no_usage");
-}
-function evaluateMuse(records, now) {
-  // 최신순 기록에서 Muse 사용량 없음 관측을 평가해요. 수집기는 관측만 남기고, 한도 소진은 여기서 판단해요.
-  const muse = (records || []).filter(r => r && r.service === "muse");
-  const latest = muse[0];
-  if (!latest || !isNoUsageRec(latest)) return { noUsage: false };
-  const weekly = muse.find(r => r.metric === "weekly_used_pct" && Number.isFinite(num(r.value)));
-  const reset = weekly ? tms(weekly.reset_at) : null;
-  const used = weekly ? num(weekly.value) : NaN;
-  const exhausted = Number.isFinite(used) && used >= 99 && reset !== null && now < reset;
-  return { noUsage: true, exhausted, weekly, latest, reset };
-}
 function latestSeries() {
   const m = new Map();
-  for (const r of RECORDS) {
-    if (isNoUsageRec(r)) continue;
-    const k = serKey(r);
-    if (!m.has(k)) m.set(k, r);
-  }
+  for (const r of RECORDS) { const k = serKey(r); if (!m.has(k)) m.set(k, r); }
   return [...m.values()];
 }
 function filterSeriesByKeys(rows, keys) {
@@ -1008,24 +990,11 @@ function filterSeriesByKeys(rows, keys) {
     return wanted.has(k);
   });
 }
-function viewOf(r, now, muse = null) {
-  let n = num(r.value), pct = isPctRec(r), ts = tms(r.ts), rs = tms(r.reset_at);
+function viewOf(r, now) {
+  const n = num(r.value), pct = isPctRec(r), ts = tms(r.ts), rs = tms(r.reset_at);
   const expired = false;  // 2026-11-16 사용자 요청: 초기화 시각이 지나도 '초기화됨' 판단 없이 마지막 값을 그대로 보여준다
-  let exhausted = false, unknown = false;
-  if (muse && muse.noUsage && r.service === "muse") {
-    const obsTs = tms(muse.latest && muse.latest.ts);
-    if (obsTs !== null) ts = obsTs;
-    if (muse.exhausted && r.metric === "weekly_used_pct") {
-      n = 100;
-      rs = muse.reset;
-      exhausted = true;
-    } else if (r.metric === "weekly_used_pct" || /session/.test(r.metric || "")) {
-      n = NaN;
-      unknown = true;
-    }
-  }
-  const st = exhausted ? "bad" : (expired || unknown || !pct ? "na" : statusOf(n));
-  return { r, n, pct, ts, rs, expired, exhausted, unknown, st, age: ts === null ? null : Math.max(0, now - ts), key: serKey(r) };
+  const st = expired || !pct ? "na" : statusOf(n);
+  return { r, n, pct, ts, rs, expired, st, age: ts === null ? null : Math.max(0, now - ts), key: serKey(r) };
 }
 const RANK = { bad:3, warn:2, ok:1, na:0 };
 function urgency(a, b) {
@@ -1153,11 +1122,10 @@ function renderLimits(now = Date.now()) {
   if (setMode("cards", "data")) cardsEl.className = "cards";
   if (modes.kpis !== "data") { modes.kpis = "data"; kpis.innerHTML = ""; }
   const all = latestSeries();
-  const muse = evaluateMuse(RECORDS, now);
   $("limToolbar").hidden = false;
   const sel = fillSeries($("lSeries"), all);
   const filtered = sel.length > 0;
-  const list = all.filter(r => !filtered || sel.includes(serKey(r))).map(r => viewOf(r, now, muse));
+  const list = all.filter(r => !filtered || sel.includes(serKey(r))).map(r => viewOf(r, now));
   if (!list.length) {
     kpis.innerHTML = ""; modes.kpis = "none";
     sub.textContent = `${COLLECT_HINT} · 조건에 맞는 한도가 없어요`;
@@ -1188,7 +1156,7 @@ function renderLimits(now = Date.now()) {
   if (listMode) {
     setHTML($("limBody"), list.map(v => {
       const r = v.r, n = v.n, st = v.st;
-      const reset = v.exhausted && v.rs ? `한도 소진 · ${esc(fmtDT(v.rs))}까지` : v.unknown ? `알 수 없음` : v.rs ? `${esc(fmtDT(v.rs))}` : `—`;
+      const reset = v.rs ? `${esc(fmtDT(v.rs))}` : `—`;
       const txt = v.pct && Number.isFinite(n) ? fmtPct(n) + "%" : fmtVal(r);
       const changed = prevVals.has(v.key) && prevVals.get(v.key) !== txt;
       prevVals.set(v.key, txt);
@@ -1204,18 +1172,14 @@ function renderLimits(now = Date.now()) {
       const r = v.r, n = v.n, st = v.st, win = WINDOW_MS(r.metric);
       let pace = null; if (v.rs && win && v.rs > now && !v.expired) pace = Math.max(0, Math.min(100, (1 - (v.rs - now) / win) * 100));
       let resetHtml;
-      if (v.exhausted && v.rs) resetHtml = `<b>한도 소진</b>${esc(fmtFull(v.rs))}까지`;
-      else if (v.unknown) resetHtml = `<b>알 수 없음</b>사용량 없음`;
-      else if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
+      if (v.expired) resetHtml = `<b>초기화됨</b>새 값 대기 중`;
       else if (v.rs && v.rs > now) resetHtml = `<b>${esc(fmtIn(v.rs - now))}</b>${esc(fmtDT(v.rs))} 초기화`;
       else if (v.rs) resetHtml = `<b>${esc(fmtDT(v.rs))}</b>초기화`;
       else resetHtml = `<b>—</b>초기화 시각 없음`;
-      const aria = v.exhausted && v.rs ? `${svcName(r.service)} ${metricLabel(r.metric)} 한도 소진, ${fmtFull(v.rs)}까지`
-                  : v.unknown ? `${svcName(r.service)} ${metricLabel(r.metric)} 사용량 알 수 없음`
-                  : v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트${v.expired ? ", 초기화됨, 새 값 대기 중" : ""}`
+      const aria = v.pct ? `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} 사용률 ${Number.isFinite(n) ? fmtPct(n) : "알 수 없음"}퍼센트${v.expired ? ", 초기화됨, 새 값 대기 중" : ""}`
                          : `${svcName(r.service)} ${metricLabel(r.metric)}${r.note ? " " + r.note : ""} ${fmtVal(r)}`;
       const big = v.pct ? `${Number.isFinite(n) ? fmtPct(n) : "—"}<small>%</small>` : esc(fmtVal(r));
-      const chip = v.exhausted ? `<span class="chip" data-s="bad">${ICON.bad}한도 소진</span>` : v.unknown ? `<span class="chip" data-s="na">${ICON.na}알 수 없음</span>` : v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
+      const chip = v.expired ? `<span class="chip" data-s="na">${ICON.na}초기화됨</span>` : "";
       const meter = v.pct ? `<div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number.isFinite(n) ? n : 0}" aria-label="${esc(aria)}"><span class="fill" style="width:${Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))}%"></span></div>` : "";
       return { key:v.key, html:`<article class="card" data-s="${st}" aria-label="${esc(aria)}">
         <div class="card-h"><span class="svc">${esc(svcName(r.service))}</span>${collectionBadge(r.service, now)}${chip}</div>
@@ -1436,7 +1400,7 @@ function renderCalendar(now = Date.now()) {
   const all = latestSeries();
   const sel = calSeries ? fillSeries(calSeries, all, CF) : CF.k.filter(k => all.some(r => serKey(r) === k));
   const filtered = sel.length > 0;
-  const seriesList = filterSeriesByKeys(all.map(r => viewOf(r, now, evaluateMuse(RECORDS, now))), sel);
+  const seriesList = filterSeriesByKeys(all.map(r => viewOf(r, now)), sel);
   const entries = calendarEntries(seriesList, now);
   calSubText(filtered);
   if (!entries.length) {
