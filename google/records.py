@@ -9,7 +9,7 @@ from decimal import Decimal
 
 KST = timezone(timedelta(hours=9))
 MAX_RECORD_BYTES = 4096
-KNOWN = {"ts", "service", "metric", "value", "unit", "reset_at", "note", "source"}
+KNOWN = {"ts", "service", "metric", "value", "unit", "reset_at", "note", "source", "reason", "hint"}
 # ECMAScript의 trim()과 정규식 공백 문자
 JS_SPACE = (
     "\t\n\v\f\r \xa0\u1680" + "".join(chr(n) for n in range(0x2000, 0x200b))
@@ -223,6 +223,8 @@ def normalize_record(raw):
     unit = string_field(raw, "unit", 20)
     note = string_field(raw, "note", 200)
     source = string_field(raw, "source", 100)
+    reason = string_field(raw, "reason", 100)
+    hint = string_field(raw, "hint", 200)
     value = raw.get("value")
     if type(value) not in (int, float) or not math.isfinite(value):
         raise ValueError("`value`는 숫자여야 해요. (예: 14 또는 7.5)")
@@ -244,13 +246,18 @@ def normalize_record(raw):
             raise ValueError("`reset_at` 형식이 올바르지 않아요. ISO 8601로 적어 주세요. (예: 2026-11-17T15:42:00+09:00)")
         reset_at = reset_at.strip(JS_SPACE)
     data = dict(ts=ts, service=service, metric=metric, value=value)
-    optional = dict(unit=unit, reset_at=reset_at, note=note, source=source)
+    optional = dict(unit=unit, reset_at=reset_at, note=note, source=source, reason=reason, hint=hint)
     data.update((k, v) for k, v in optional.items() if v is not None)
     data.update((k, v) for k, v in raw.items() if k not in KNOWN)
     encoded = json_bytes(data)
     if len(encoded) > MAX_RECORD_BYTES:
         raise ValueError(f"기록 하나는 {MAX_RECORD_BYTES}바이트 이하여야 해요.")
-    search = " ".join((service, metric, note or "", source or "", unit or "", number_text(value))).lower()
+    parts = [service, metric, note or "", source or "", unit or "", number_text(value)]
+    if reason:
+        parts.insert(-1, reason)
+    if hint:
+        parts.insert(-1, hint)
+    search = " ".join(parts).lower()
     dedupe_key = "|".join((ts_kst, service, metric, note or ""))
     return (
         ts_kst, sqlite_text(service), sqlite_text(metric), value, sqlite_text(unit),

@@ -201,6 +201,25 @@ class HTTPTests(unittest.TestCase):
         accepted = self.ingest([RECORD] * 40)
         self.assertEqual((accepted["inserted"], accepted["duplicates"]), (1, 39))
 
+    def test_ingest_usage_unavailable_with_reason_and_hint(self):
+        rec = dict(ts="2026-11-21T07:40:00+09:00", service="muse", metric="usage_unavailable",
+                   value=0, reason="server_sent_no_usage",
+                   hint="the server sent no usage data for this subscription",
+                   source="token-usage-logging-bot")
+        self.assertEqual(self.ingest(rec), dict(ok=True, received=1, inserted=1, duplicates=0))
+        body = self.api("GET", "/api/records?service=muse&latest=1&total=0", 200)[0]
+        rows = body["records"] or body.get("latest") or []
+        # records page is newest first; find our row
+        found = [r for r in (body.get("records") or []) + (body.get("latest") or [])
+                 if r.get("metric") == "usage_unavailable"]
+        self.assertTrue(found, body)
+        row = found[0]
+        self.assertEqual(row["value"], 0)
+        self.assertEqual(row["reason"], "server_sent_no_usage")
+        self.assertIn("the server sent no usage data", row["hint"])
+        self.assertEqual(self.ingest({**rec, "value": None}, 400)["details"][0]["error"],
+                         "`value`는 숫자여야 해요. (예: 14 또는 7.5)")
+
     def test_ingest_body_limits_and_chunked_transport(self):
         large = "요청이 너무 커요. (최대 256KB)"
         data, _ = self.api("POST", "/api/ingest", 413, headers={**BEARER, "Content-Length": str(256 * 1024 + 1)})
