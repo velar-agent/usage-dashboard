@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>토큰 사용량</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <!-- The page ships only this skeleton; app.js fills every section from one report request. -->
+  <!-- 이 화면은 뼈대만 담고 있습니다. app.js가 리포트 요청 한 번의 결과로 모든 영역을 채웁니다. -->
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>토큰 사용량</h1>
+    <div class="who">
+      <span id="viewer"></span>
+      <button type="button" id="logout">로그아웃</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- One filter row above everything it scopes; every number below follows it. -->
+    <!-- 필터는 적용 대상 전체의 위에 한 줄로 둡니다. 아래의 모든 숫자가 이 조건을 따릅니다. -->
+    <section class="filters" aria-label="조회 조건">
+      <div class="presets" role="group" aria-label="기간">
+        <button type="button" data-preset="today" aria-pressed="false">오늘</button>
+        <button type="button" data-preset="7d" aria-pressed="false">7일</button>
+        <button type="button" data-preset="30d" aria-pressed="false">30일</button>
+        <button type="button" data-preset="90d" aria-pressed="false">90일</button>
+        <button type="button" data-preset="all" aria-pressed="false">전체</button>
+      </div>
+      <!-- The controls name themselves (their first option, or the dates), so visible labels are
+           left out to keep the row on one line; aria-label carries the name instead. -->
+      <!-- 각 컨트롤은 첫 번째 선택지나 날짜 자체로 무엇인지 드러나므로, 한 줄에 들어가도록 보이는
+           라벨을 생략합니다. 이름은 aria-label로 전달합니다. -->
+      <span class="dates">
+        <input type="date" id="from" aria-label="시작 날짜">
+        <span aria-hidden="true">~</span>
+        <input type="date" id="to" aria-label="끝 날짜">
+      </span>
+      <select id="f-user" aria-label="사용자"></select>
+      <select id="f-model" aria-label="모델"></select>
+      <select id="f-project" aria-label="프로젝트"></select>
+      <button type="button" id="refresh">새로고침</button>
+    </section>
+
+    <p id="status" class="status" role="alert" hidden></p>
+
+    <div id="content">
+      <section id="kpis" class="kpis" aria-label="요약"></section>
+      <p id="compare-note" class="note" hidden></p>
+
+      <section id="empty" class="card empty" hidden>
+        <h2>이 조건에 해당하는 기록이 없습니다</h2>
+        <p>기간이나 필터를 바꿔 보십시오. 수집 프로세스가 아직 데이터를 보내지 않았다면 기록이 도착한 뒤에 표시됩니다.</p>
+      </section>
+
+      <div id="details" hidden>
+        <section class="card" aria-labelledby="mix-title">
+          <header class="card-head">
+            <div>
+              <h2 id="mix-title">토큰 구성</h2>
+              <p class="card-sub">같은 사용량을 토큰 수와 추정 비용으로 나란히 봅니다. 토큰 수가 많은 종류와 비용이 큰 종류는 다릅니다.</p>
+            </div>
+          </header>
+          <div id="mix-bars" class="mix-bars"></div>
+          <ul id="mix-legend" class="legend"></ul>
+          <div id="mix-table" class="table-wrap"></div>
+          <p id="mix-notes" class="note"></p>
+        </section>
+
+        <section class="card" aria-labelledby="tokens-title">
+          <header class="card-head">
+            <div>
+              <h2 id="tokens-title">일별 토큰</h2>
+              <p class="card-sub">종류마다 규모가 크게 달라서 차트마다 세로축이 다릅니다.</p>
+            </div>
+            <button type="button" class="toggle" data-toggle="tokens" aria-pressed="false">표로 보기</button>
+          </header>
+          <div id="tokens-chart" class="multiples"></div>
+          <div id="tokens-table" class="table-wrap is-tall" hidden></div>
+        </section>
+
+        <section class="card" id="card-cost" aria-labelledby="cost-title">
+          <header class="card-head">
+            <div>
+              <h2 id="cost-title">일별 추정 비용</h2>
+              <p class="card-sub">토큰 종류별 비용을 아래부터 범례 순서대로 쌓았습니다.</p>
+            </div>
+            <button type="button" class="toggle" data-toggle="cost" aria-pressed="false">표로 보기</button>
+          </header>
+          <!-- The legend belongs to the chart, so it hides with the chart in table view. -->
+          <!-- 범례는 차트에 딸린 것이므로 표 보기에서는 차트와 함께 숨깁니다. -->
+          <div id="cost-chart">
+            <ul id="cost-legend" class="legend"></ul>
+            <div id="cost-plot"></div>
+          </div>
+          <div id="cost-table" class="table-wrap is-tall" hidden></div>
+        </section>
+
+        <section class="card" aria-labelledby="users-title">
+          <header class="card-head"><h2 id="users-title">사용자별</h2></header>
+          <div id="users-table" class="table-wrap"></div>
+        </section>
+
+        <section class="card" aria-labelledby="models-title">
+          <header class="card-head"><h2 id="models-title">모델별</h2></header>
+          <div id="models-table" class="table-wrap"></div>
+        </section>
+
+        <section class="card" aria-labelledby="projects-title">
+          <header class="card-head"><h2 id="projects-title">프로젝트별</h2></header>
+          <div id="projects-table" class="table-wrap"></div>
+        </section>
+
+        <section class="card" id="card-sources" aria-labelledby="sources-title" hidden>
+          <header class="card-head"><h2 id="sources-title">출처별</h2></header>
+          <div id="sources-table" class="table-wrap"></div>
+        </section>
+
+        <section class="card" id="card-sessions" aria-labelledby="sessions-title" hidden>
+          <header class="card-head">
+            <div>
+              <h2 id="sessions-title">세션</h2>
+              <p class="card-sub" id="sessions-sub"></p>
+            </div>
+          </header>
+          <div id="sessions-table" class="table-wrap"></div>
+        </section>
+      </div>
+    </div>
+
+    <footer id="footnote" class="footnote"></footer>
+  </main>
+</body>
+</html>

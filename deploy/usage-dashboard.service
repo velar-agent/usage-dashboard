@@ -1,0 +1,25 @@
+# systemd unit example. The user and the paths below are placeholders: replace them with the
+# account and directories on your server, then copy this file to
+# /etc/systemd/system/usage-dashboard.service.
+# systemd 유닛 예시입니다. 아래의 사용자와 경로는 자리표시자입니다. 서버의 계정과 폴더로 바꾼 뒤
+# /etc/systemd/system/usage-dashboard.service 로 복사합니다.
+
+[Unit]
+Description=usage-dashboard (Claude token usage dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=usage-dashboard
+WorkingDirectory=/opt/usage-dashboard
+# Use an absolute --db path: a relative one would silently create a new database elsewhere.
+# --db는 절대 경로로 적습니다. 상대 경로는 다른 위치에 새 데이터베이스를 조용히 만들 수 있습니다.
+ExecStart=/opt/usage-dashboard/target/release/usage-dashboard \
+    --db /opt/usage-dashboard/usage.db \
+    serve --listen 0.0.0.0:8787
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

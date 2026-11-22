@@ -1,0 +1,15 @@
+# Build output.
+# 빌드 결과물입니다.
+/target/
+
+# Local database files hold usage records and token hashes; never commit them.
+# 로컬 데이터베이스 파일에는 사용 기록과 토큰 해시가 들어 있으므로 커밋하지 않습니다.
+*.db
+*.db-shm
+*.db-wal
+
+# A site-specific price table copied from prices.json.
+# prices.json을 복사해 고친 설치별 단가표입니다.
+/prices.local.json
+
+.DS_Store

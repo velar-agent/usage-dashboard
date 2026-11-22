@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>로그인 - 토큰 사용량</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/login.js"></script>
+</head>
+<body class="login-page">
+  <main class="login">
+    <h1>토큰 사용량</h1>
+    <p>관리자에게 받은 토큰으로 로그인합니다. 수집 프로세스에 넣은 토큰과 같은 토큰입니다.</p>
+    <!-- The token is sent in the request body, never in the address bar. -->
+    <!-- 토큰은 요청 본문으로 보내며 주소창에는 들어가지 않습니다. -->
+    <form id="login-form">
+      <label for="token">토큰</label>
+      <input type="password" id="token" name="token" autocomplete="current-password" spellcheck="false" placeholder="udt_..." required autofocus>
+      <button type="submit" id="submit">로그인</button>
+      <p id="error" class="status" role="alert" hidden></p>
+    </form>
+  </main>
+</body>
+</html>

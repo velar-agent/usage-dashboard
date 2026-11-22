@@ -1,0 +1,28 @@
+[package]
+name = "usage-dashboard"
+version = "0.1.0"
+edition = "2024"
+# The highest minimum among the dependencies (rusqlite 0.43 needs 1.89).
+# 의존성들이 요구하는 최소 버전 중 가장 높은 값입니다(rusqlite 0.43이 1.89를 요구합니다).
+rust-version = "1.89"
+description = "Shared dashboard server for Claude token usage reported by collector processes"
+publish = false
+
+[dependencies]
+# HTTP server. Default features are trimmed to what the server uses.
+# HTTP 서버입니다. 기본 기능 중 서버가 쓰는 것만 켭니다.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+getrandom = "0.4"
+# "bundled" compiles SQLite into the binary, so the host needs a C compiler but no SQLite package.
+# "bundled"는 SQLite를 바이너리에 함께 컴파일합니다. 빌드하는 컴퓨터에 C 컴파일러는 필요하지만 SQLite 패키지는 필요 없습니다.
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

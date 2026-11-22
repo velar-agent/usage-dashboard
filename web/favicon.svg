@@ -1,0 +1,7 @@
+<!-- Three rising columns on a dark tile. / 어두운 바탕 위에 점점 높아지는 막대 세 개입니다. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#1a1a19"/>
+  <path d="M7 25v-6a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v6z" fill="#3987e5"/>
+  <path d="M14 25V13a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v12z" fill="#d95926"/>
+  <path d="M21 25V9a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v16z" fill="#199e70"/>
+</svg>

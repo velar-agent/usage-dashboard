@@ -1,0 +1,679 @@
+/*
+ * Dashboard styles. Colors are defined once as roles; dark mode swaps the role values.
+ * 대시보드 스타일입니다. 색은 역할 이름으로 한 번만 정의하고, 다크 모드에서는 역할의 값만 바꿉니다.
+ *
+ * The five series colors are the first five slots of a palette checked for color-vision
+ * deficiency separation, in a fixed order. Do not reorder or add hues without re-checking.
+ * 계열 색 다섯 개는 색각 이상에서도 구별되는지 검증한 팔레트의 앞 다섯 칸이며 순서가 고정입니다.
+ * 다시 검증하지 않고 순서를 바꾸거나 색을 추가하지 마십시오.
+ */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --border-strong: rgba(11, 11, 11, 0.22);
+  --wash: rgba(11, 11, 11, 0.05);
+  --focus: #2a78d6;
+  --bar: #898781;
+  --shadow: 0 6px 20px rgba(11, 11, 11, 0.12);
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  /* Text printed inside a filled block: white, except near-black on the light yellow. */
+  /* 색이 칠해진 구간 안의 글자색입니다. 흰색이 기본이고, 밝은 노랑 위에서만 검정에 가까운 색입니다. */
+  --on-s4: #0b0b0b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.24);
+    --wash: rgba(255, 255, 255, 0.06);
+    --focus: #3987e5;
+    --bar: #898781;
+    --shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --s4: #c98500;
+    --s5: #d55181;
+    --on-s4: #ffffff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* An element marked hidden stays hidden even when a class gives it a display value. */
+/* hidden 속성이 붙은 요소는 클래스가 display 값을 주더라도 숨겨진 채로 둡니다. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* Korean wraps between words, not in the middle of one; a single overlong word may still break. */
+  /* 한국어 줄바꿈은 낱말 중간이 아니라 낱말 사이에서 합니다. 지나치게 긴 낱말 하나는 끊을 수 있습니다. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+figure {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+input[type="date"],
+select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--wash);
+}
+
+button[aria-pressed="true"] {
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
+select {
+  max-width: 180px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- Page frame / 화면 틀 --- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 18px 20px 6px;
+}
+
+.topbar h1 {
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-2);
+}
+
+main {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 8px 20px 40px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 0 14px;
+}
+
+.dates {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.presets {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.status {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+#content {
+  transition: opacity 120ms;
+}
+
+#content.is-loading {
+  opacity: 0.55;
+}
+
+.note {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.footnote {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* --- Summary tiles / 요약 타일 --- */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.stat-label {
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Large standalone figures use proportional digits; tabular digits are for aligned columns. */
+/* 크게 따로 쓰는 숫자는 비례폭 숫자를 씁니다. 고정폭 숫자는 세로로 맞추는 열에만 씁니다. */
+.stat-value {
+  margin-top: 2px;
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.stat-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.stat-delta {
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+/* --- Cards / 카드 --- */
+
+.card {
+  margin-top: 12px;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card h2 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.card-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.toggle {
+  flex: none;
+  height: 28px;
+  font-size: 12.5px;
+}
+
+.empty {
+  padding: 36px 18px;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+.empty h2 {
+  margin-bottom: 6px;
+  color: var(--ink);
+}
+
+/* --- Legend and swatches / 범례와 색 견본 --- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 0;
+  margin: 10px 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.bg-s1 { background: var(--s1); }
+.bg-s2 { background: var(--s2); }
+.bg-s3 { background: var(--s3); }
+.bg-s4 { background: var(--s4); }
+.bg-s5 { background: var(--s5); }
+
+.fill-s1 { fill: var(--s1); }
+.fill-s2 { fill: var(--s2); }
+.fill-s3 { fill: var(--s3); }
+.fill-s4 { fill: var(--s4); }
+.fill-s5 { fill: var(--s5); }
+
+/* --- Segmented bars / 구간 막대 --- */
+
+.mix-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.mix-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.mix-label {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+/* The 2px gap in the surface color separates neighbours; no borders are drawn around marks. */
+/* 이웃한 구간은 바탕색 2px 간격으로 구분합니다. 구간 둘레에 테두리를 그리지 않습니다. */
+.segbar {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+}
+
+.segbar.is-empty {
+  border-radius: 4px;
+  background: var(--wash);
+}
+
+.seg {
+  display: flex;
+  flex: 0 1 0;
+  align-items: center;
+  min-width: 2px;
+  border-radius: 4px;
+}
+
+.seg:hover,
+.seg:focus-visible {
+  filter: brightness(1.08);
+}
+
+.seg-label {
+  padding-left: 8px;
+  color: #ffffff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bg-s4 .seg-label {
+  color: var(--on-s4);
+}
+
+/* --- Charts / 차트 --- */
+
+.multiples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 28px;
+}
+
+@media (max-width: 760px) {
+  .multiples {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.multiple figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.multiple-name {
+  font-weight: 600;
+}
+
+.multiple-total {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.chart {
+  display: block;
+  border-radius: 4px;
+}
+
+/* Gridlines and axes are solid hairlines that recede behind the data. */
+/* 격자선과 축은 데이터 뒤로 물러나는 가는 실선입니다. */
+.chart-grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.chart-axis {
+  stroke: var(--axis);
+  stroke-width: 1;
+}
+
+.chart-tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-hover {
+  fill: var(--wash);
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 20;
+  min-width: 150px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  pointer-events: none;
+}
+
+.tooltip-title {
+  margin-bottom: 4px;
+  color: var(--ink-2);
+}
+
+.tooltip-row {
+  display: grid;
+  grid-template-columns: 12px auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.tooltip-row.is-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--grid);
+}
+
+/* Tooltip rows key their series with a short stroke rather than a box. */
+/* 툴팁의 각 줄은 상자 대신 짧은 선으로 계열을 표시합니다. */
+.tooltip-key {
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.tooltip-row strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip-name {
+  color: var(--ink-2);
+}
+
+/* --- Tables / 표 --- */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap.is-tall {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 7px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  border-bottom: 1px solid var(--axis);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.is-tall th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+
+td {
+  border-bottom: 1px solid var(--grid);
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tfoot td {
+  border-top: 1px solid var(--axis);
+  border-bottom: 0;
+  font-weight: 600;
+}
+
+th.num,
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+td.name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+td.barcell {
+  width: 34%;
+  min-width: 220px;
+}
+
+.bar-value {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bar-value span {
+  flex: none;
+  min-width: 11ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rank-track {
+  flex: 1;
+  min-width: 60px;
+}
+
+/* Thin bar, square at the baseline and rounded at the data end. */
+/* 가는 막대입니다. 기준선 쪽은 각지고 값 쪽 끝은 둥급니다. */
+.rank-bar {
+  height: 8px;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--bar);
+}
+
+.more {
+  margin-top: 10px;
+  height: 28px;
+  font-size: 12.5px;
+}
+
+/* --- Login page / 로그인 화면 --- */
+
+.login-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 20px;
+}
+
+.login {
+  width: 100%;
+  max-width: 380px;
+  padding: 26px 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.login h1 {
+  margin-bottom: 6px;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.login p {
+  color: var(--ink-2);
+}
+
+.login form {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.login label {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.login input {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--page);
+}
+
+.login button {
+  height: 38px;
+  margin-top: 6px;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.login button:hover {
+  opacity: 0.88;
+  background: var(--ink);
+}
+
+.login .status {
+  margin: 6px 0 0;
+}
